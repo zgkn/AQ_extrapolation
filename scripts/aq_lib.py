@@ -118,6 +118,83 @@ def time_to_threshold(baseline: float, latest: float, target_psi: float):
     return {"reachable": False, "needed_flat_pm25": target_pm25}
 
 
+THRESHOLDS = [100, 150, 200]
+
+
+def to_float(s):
+    if s is None or s == "":
+        return None
+    return float(s)
+
+
+def compute_payload(rows: list[dict], region: str):
+    """Shared projection/threshold computation for a single region's rows
+    (already filtered to that region, sorted ascending by timestamp).
+
+    Returns a dict consumed identically by the PNG dashboard and the website's
+    data.json, so the two never drift apart on the underlying math. Returns
+    None if there's no data for the region.
+    """
+    if not rows:
+        return None
+
+    times = [parse_ts(r["timestamp"]) for r in rows]
+    psi = [to_float(r["psi_twenty_four_hourly"]) for r in rows]
+    pm25_1h = [to_float(r["pm25_one_hourly"]) for r in rows]
+    pm25_24h = [to_float(r["pm25_twenty_four_hourly"]) for r in rows]
+    pm25_24h_source = [r.get("pm25_24h_source") or None for r in rows]
+
+    now = times[-1]
+    window_start = now - dt.timedelta(hours=24)
+    idx = [i for i, t in enumerate(times) if t >= window_start] or list(range(len(times)))
+
+    history = [
+        {
+            "t": times[i].isoformat(),
+            "psi": psi[i],
+            "pm25_1h": pm25_1h[i],
+            "pm25_24h": pm25_24h[i],
+            "pm25_24h_source": pm25_24h_source[i],
+        }
+        for i in idx
+    ]
+
+    baseline = next((pm25_24h[i] for i in range(len(rows) - 1, -1, -1) if pm25_24h[i] is not None), None)
+    latest = next((pm25_1h[i] for i in range(len(rows) - 1, -1, -1) if pm25_1h[i] is not None), None)
+
+    projection = []
+    if baseline is not None and latest is not None:
+        for h in range(0, 25):
+            proj_avg = projected_avg_pm25(baseline, latest, h)
+            projection.append({"t": (now + dt.timedelta(hours=h)).isoformat(), "psi": pm25_to_psi(proj_avg)})
+
+    thresholds = []
+    for target in THRESHOLDS:
+        entry = {"value": target}
+        if baseline is not None and latest is not None:
+            result = time_to_threshold(baseline, latest, target)
+            if result["reachable"]:
+                entry["reachable"] = True
+                entry["hours"] = result["hours"]
+                entry["eta"] = (now + dt.timedelta(hours=result["hours"])).isoformat()
+            else:
+                entry["reachable"] = False
+                entry["needed_flat_pm25"] = result["needed_flat_pm25"]
+        else:
+            entry["reachable"] = None
+        thresholds.append(entry)
+
+    return {
+        "region": region,
+        "as_of": now.isoformat(),
+        "history": history,
+        "projection": projection,
+        "baseline": baseline,
+        "latest": latest,
+        "thresholds": thresholds,
+    }
+
+
 def parse_ts(ts: str) -> dt.datetime:
     """Parse an ISO-8601 timestamp (as returned by data.gov.sg) into an
     aware datetime."""

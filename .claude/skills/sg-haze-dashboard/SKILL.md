@@ -1,6 +1,6 @@
 ---
 name: sg-haze-dashboard
-description: Rebuild, extend, or debug the Singapore PM2.5/PSI haze-tracking GitHub Actions pipeline in this repo (scripts/fetch_data.py, scripts/build_dashboard.py, .github/workflows/haze-dashboard.yml, data/history.csv). Use when asked about this project's haze dashboard, PSI projections, data.gov.sg air quality data, or when setting up a similar incremental-fetch-and-commit pipeline elsewhere.
+description: Rebuild, extend, or debug the Singapore PM2.5/PSI haze-tracking GitHub Actions pipeline in this repo (scripts/fetch_data.py, scripts/build_dashboard.py, scripts/build_map.py, .github/workflows/haze-dashboard.yml, data/history.csv, docs/index.html). Use when asked about this project's haze dashboard, the GitHub Pages map site, PSI projections, data.gov.sg air quality data, or when setting up a similar incremental-fetch-and-commit pipeline elsewhere.
 ---
 
 # Singapore Haze Dashboard pipeline
@@ -9,25 +9,46 @@ description: Rebuild, extend, or debug the Singapore PM2.5/PSI haze-tracking Git
 
 An hourly GitHub Actions pipeline that tracks Singapore PM2.5 + PSI from
 data.gov.sg and projects when PSI will cross 100/150/200, using
-git-commit-as-persistence (no external DB/cache/artifacts).
+git-commit-as-persistence (no external DB/cache/artifacts). Publishes both a
+PNG chart and a small GitHub Pages website (a Folium map).
 
 ## Files
 
 - `scripts/aq_lib.py` -- shared constants, the PM2.5<->PSI breakpoint table,
-  and projection math (`pm25_to_psi`, `psi_to_pm25`, `projected_avg_pm25`,
-  `time_to_threshold`).
+  projection math (`pm25_to_psi`, `psi_to_pm25`, `projected_avg_pm25`,
+  `time_to_threshold`), and `compute_payload(rows, region)` -- the one place
+  that turns a region's CSV rows into {history, projection, thresholds}, used
+  by both `build_dashboard.py` and `build_map.py` so their numbers can't drift.
 - `scripts/fetch_data.py` -- incremental fetcher. Each run does a cheap
   "latest only" call (no `date` param) to both endpoints, and additionally
   backfills via `?date=YYYY-MM-DD` per missing day if the last row in
   `data/history.csv` is more than ~2h stale (missed run or first run).
   Dedupes on `(timestamp, region)`, retains 48h of history (dashboard only
   needs 24h; the buffer protects against a missed run needing backfill).
-- `scripts/build_dashboard.py` -- renders `dashboard.png`: past-24h PSI
-  (solid) + PM2.5 (secondary axis) + projected PSI (dashed) with threshold
-  lines/ETAs for 100/150/200.
+- `scripts/build_dashboard.py` -- renders `dashboard.png`: two stacked
+  single-axis panels (PSI, then PM2.5 -- deliberately *not* one dual-axis
+  plot, which invents a correlation between two differently-scaled series)
+  with projected PSI (dashed) and threshold lines/ETAs for 100/150/200.
+- `scripts/build_map.py` -- renders `docs/index.html`: a Folium/Leaflet map
+  of Singapore with a colored marker per region (NEA PSI band colors), a
+  popup per marker with current PSI/PM2.5 and threshold ETAs, and a header
+  banner with the national figures. Uses plain `OpenStreetMap` tiles
+  (`tiles="OpenStreetMap"`) deliberately -- CartoDB's basemaps now require an
+  API key, which would break on a public site with no key configured.
+  `REGION_COORDS` are approximate representative points for each region, not
+  official boundaries.
 - `.github/workflows/haze-dashboard.yml` -- hourly cron + `workflow_dispatch`,
-  runs fetch -> build -> `git pull --rebase` -> commit + push
-  `data/history.csv` and `dashboard.png`.
+  runs fetch -> build_dashboard -> build_map -> `git pull --rebase` -> commit
+  + push `data/history.csv`, `dashboard.png`, and `docs/index.html`.
+
+## GitHub Pages
+
+`docs/index.html` is only reachable at a URL once Pages is turned on for the
+repo (Settings -> Pages -> Source: Deploy from a branch -> the default branch,
+folder `/docs`). This is a one-time manual step -- no tool in this session can
+flip that setting; if asked to "make the site live", tell the user to do this
+(or check whether it's already on) rather than assuming the workflow alone
+publishes it.
 
 ## Data sources (no API key needed)
 
@@ -75,10 +96,14 @@ Given current 24-hr baseline `B` and latest 1-hr reading `X` held flat:
 
 ## Common follow-up tasks
 
-- **Add a region/dashboard**: `build_dashboard.py` currently hardcodes
-  `REGION = "national"`; `data/history.csv` already stores all six regions,
-  so add a loop or a CLI arg rather than refetching.
-- **Change thresholds**: edit `THRESHOLDS` in `build_dashboard.py`.
+- **Add a region to the PNG**: `build_dashboard.py` currently hardcodes
+  `REGION = "national"`; `data/history.csv` already stores all six regions
+  (the map already plots five of them), so add a loop or a CLI arg rather
+  than refetching.
+- **Change thresholds**: edit `THRESHOLDS` in `aq_lib.py` (shared by both
+  `build_dashboard.py` and `build_map.py`/`compute_payload`).
+- **Change PSI band colors/cutoffs on the map**: edit `PSI_BANDS` in
+  `build_map.py`.
 - **Debug a bad run**: check the Action's logs for `run type: latest only`
   vs `latest + backfill(...)`, and the `retention: trimmed N row(s)` line.
 - **If pushes start conflicting**: the workflow already does

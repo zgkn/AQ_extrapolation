@@ -35,11 +35,14 @@ jobs:
       - name: Build dashboard chart
         run: python scripts/build_dashboard.py
 
+      - name: Build website (Folium map)
+        run: python scripts/build_map.py
+
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/history.csv dashboard.png
+          git add data/history.csv dashboard.png docs/index.html
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0

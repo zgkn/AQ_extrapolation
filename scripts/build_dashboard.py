@@ -1,6 +1,10 @@
 """Builds a PNG dashboard from data/history.csv: past 24h of PSI + PM2.5 for
 the "national" region, plus a flat-PM2.5 projection with threshold ETAs.
 
+Rendered as two stacked single-axis panels (PSI, then PM2.5) rather than one
+dual-axis plot -- a dual-axis chart invents an arbitrary correlation between
+two differently-scaled series, so PSI and PM2.5 each get their own axis.
+
 CAVEATS (see aq_lib.py for the PSI-modeling one):
   - The projection assumes the latest 1-hr PM2.5 reading holds perfectly
     flat for up to 24h. Real air quality will not actually do this -- this
@@ -22,20 +26,16 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(__file__))
-from aq_lib import (  # noqa: E402
-    HISTORY_PATH,
-    pm25_to_psi,
-    projected_avg_pm25,
-    parse_ts,
-    time_to_threshold,
-)
+from aq_lib import HISTORY_PATH, compute_payload, parse_ts  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("build_dashboard")
 
 REGION = "national"
-THRESHOLDS = [100, 150, 200]
 OUTPUT_PATH = "dashboard.png"
+
+PSI_COLOR = "#2a78d6"
+PM25_COLOR = "#eb6834"
 
 
 def load_region_history(region: str) -> list[dict]:
@@ -51,84 +51,55 @@ def load_region_history(region: str) -> list[dict]:
     return rows
 
 
-def to_float(s: str):
-    if s is None or s == "":
-        return None
-    return float(s)
-
-
 def main() -> None:
     rows = load_region_history(REGION)
-    if not rows:
+    payload = compute_payload(rows, REGION)
+    if payload is None:
         raise SystemExit(f"no rows for region={REGION!r} in {HISTORY_PATH}")
 
-    times = [parse_ts(r["timestamp"]) for r in rows]
-    psi = [to_float(r["psi_twenty_four_hourly"]) for r in rows]
-    pm25_1h = [to_float(r["pm25_one_hourly"]) for r in rows]
-    pm25_24h = [to_float(r["pm25_twenty_four_hourly"]) for r in rows]
+    now = parse_ts(payload["as_of"])
+    hist_t = [parse_ts(h["t"]) for h in payload["history"]]
+    hist_psi = [h["psi"] for h in payload["history"]]
+    hist_pm25 = [h["pm25_1h"] for h in payload["history"]]
 
-    now = times[-1]
-    window_start = now - dt.timedelta(hours=24)
-    plot_idx = [i for i, t in enumerate(times) if t >= window_start]
-    if not plot_idx:
-        plot_idx = list(range(len(times)))
+    fig, (ax_psi, ax_pm25) = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
 
-    plot_times = [times[i] for i in plot_idx]
-    plot_psi = [psi[i] for i in plot_idx]
-    plot_pm25 = [pm25_1h[i] for i in plot_idx]
+    ax_psi.plot(hist_t, hist_psi, color=PSI_COLOR, linewidth=2, label="PSI (actual)")
+    if payload["projection"]:
+        proj_t = [parse_ts(p["t"]) for p in payload["projection"]]
+        proj_psi = [p["psi"] for p in payload["projection"]]
+        ax_psi.plot(proj_t, proj_psi, color=PSI_COLOR, linewidth=2, linestyle="--", alpha=0.6, label="PSI (projected, flat PM2.5)")
 
-    # baseline B = latest available 24-hr avg PM2.5; latest X = latest 1-hr PM2.5
-    baseline = next((pm25_24h[i] for i in range(len(rows) - 1, -1, -1) if pm25_24h[i] is not None), None)
-    latest = next((pm25_1h[i] for i in range(len(rows) - 1, -1, -1) if pm25_1h[i] is not None), None)
-
-    fig, ax_psi = plt.subplots(figsize=(11, 6))
-    ax_pm25 = ax_psi.twinx()
-
-    ax_psi.plot(plot_times, plot_psi, color="tab:red", linewidth=2, label="24-hr PSI (actual)")
-    ax_pm25.plot(plot_times, plot_pm25, color="tab:blue", linewidth=1, alpha=0.6, label="1-hr PM2.5 (µg/m³)")
-
-    if baseline is not None and latest is not None:
-        proj_hours = [h for h in range(0, 25)]
-        proj_times = [now + dt.timedelta(hours=h) for h in proj_hours]
-        proj_pm25_avg = [projected_avg_pm25(baseline, latest, h) for h in proj_hours]
-        proj_psi = [pm25_to_psi(v) for v in proj_pm25_avg]
-        ax_psi.plot(proj_times, proj_psi, color="tab:red", linewidth=2, linestyle="--", label="Projected PSI (flat PM2.5)")
-
-    for threshold in THRESHOLDS:
-        ax_psi.axhline(threshold, color="gray", linestyle=":", linewidth=1)
-        label = f"PSI {threshold}"
-        if baseline is not None and latest is not None:
-            result = time_to_threshold(baseline, latest, threshold)
-            if result["reachable"]:
-                eta = now + dt.timedelta(hours=result["hours"])
-                label += f"\nETA {eta.strftime('%a %H:%M')} (+{result['hours']:.1f}h)"
-            else:
-                label += f"\nnot reachable in 24h flat\nneeds X≈{result['needed_flat_pm25']:.0f}µg/m³"
-        # Anchor to the right edge in axes x-coords (data y-coords) so labels
-        # don't collide with the historical PM2.5/PSI lines on the left.
+    for th in payload["thresholds"]:
+        ax_psi.axhline(th["value"], color="#898781", linewidth=1)
+        label = f"PSI {th['value']}"
+        if th["reachable"] is True:
+            eta = parse_ts(th["eta"])
+            label += f"\nETA {eta.strftime('%a %H:%M')} (+{th['hours']:.1f}h)"
+        elif th["reachable"] is False:
+            label += f"\nnot reachable in 24h flat\nneeds X≈{th['needed_flat_pm25']:.0f}µg/m³"
         ax_psi.annotate(
             label,
-            xy=(0.995, threshold),
+            xy=(0.995, th["value"]),
             xycoords=("axes fraction", "data"),
             xytext=(-4, 4),
             textcoords="offset points",
             ha="right",
             va="bottom",
             fontsize=7.5,
-            color="dimgray",
+            color="#52514e",
             bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor="none", alpha=0.75),
         )
 
-    ax_psi.set_ylabel("PSI (24-hr)", color="tab:red")
-    ax_pm25.set_ylabel("PM2.5 (µg/m³, 1-hr)", color="tab:blue")
-    ax_psi.set_xlabel("Time")
+    ax_psi.set_ylabel("PSI (24-hr)")
+    ax_psi.legend(loc="lower right", fontsize=8)
     ax_psi.set_title(f"Singapore Haze Dashboard -- {REGION} (as of {now.strftime('%Y-%m-%d %H:%M %Z')})")
-    ax_psi.xaxis.set_major_formatter(mdates.DateFormatter("%a %H:%M"))
-    fig.autofmt_xdate()
 
-    lines1, labels1 = ax_psi.get_legend_handles_labels()
-    lines2, labels2 = ax_pm25.get_legend_handles_labels()
-    ax_psi.legend(lines1 + lines2, labels1 + labels2, loc="lower right", fontsize=8)
+    ax_pm25.plot(hist_t, hist_pm25, color=PM25_COLOR, linewidth=2)
+    ax_pm25.set_ylabel("PM2.5 (µg/m³, 1-hr)")
+    ax_pm25.set_xlabel("Time")
+    ax_pm25.xaxis.set_major_formatter(mdates.DateFormatter("%a %H:%M"))
+    fig.autofmt_xdate()
 
     fig.text(
         0.01,
@@ -139,7 +110,7 @@ def main() -> None:
         color="gray",
     )
 
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
     fig.savefig(OUTPUT_PATH, dpi=150)
     log.info("wrote %s", OUTPUT_PATH)
 
