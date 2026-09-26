@@ -752,3 +752,7 @@ INDEX_HTML = r"""<!doctype html>
 </body>
 </html>
 """
+
+
+if __name__ == "__main__":
+    main()
