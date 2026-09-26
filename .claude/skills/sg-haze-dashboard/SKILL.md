@@ -53,10 +53,17 @@ publishes it.
 ## Data sources (no API key needed)
 
 - `GET https://api-open.data.gov.sg/v2/real-time/api/pm25` --
-  `data.items[].readings.pm25_one_hourly.{region}`, region in
-  national/north/south/east/west/central.
+  `data.items[].readings.pm25_one_hourly.{region}`.
 - `GET https://api-open.data.gov.sg/v2/real-time/api/psi` --
   `data.items[].readings.psi_twenty_four_hourly.{region}` (official 24-hr PSI).
+- **Confirmed against the live API: there is no "national" region key** in
+  either endpoint, despite that being assumed at spec time -- only
+  `aq_lib.API_REGIONS` (north/south/east/west/central). `aq_lib.REGIONS` adds
+  `"national"` on top as a nationwide aggregate that `fetch_data.py`
+  synthesizes itself (`synthesize_national()`): the mean of whichever of the
+  five regions have a value, per timestamp. Its `pm25_24h_source` reads
+  `derived_national_mean` in the CSV so it's never confused for a real API
+  field.
 - Both support `?date=YYYY-MM-DD` (psi) or `YYYY-MM-DDTHH:mm:ss` (pm25) for
   backfill, and `paginationToken` in `data` if the response is paginated.
 - **Gotcha:** some fetchers/caches silently drop `?date=`. Always check the

@@ -26,12 +26,12 @@ import requests
 
 sys.path.insert(0, os.path.dirname(__file__))
 from aq_lib import (  # noqa: E402
+    API_REGIONS,
     CSV_FIELDS,
     GAP_THRESHOLD_HOURS,
     HISTORY_PATH,
     PM25_URL,
     PSI_URL,
-    REGIONS,
     RETENTION_HOURS,
     parse_ts,
     psi_to_pm25,
@@ -138,12 +138,12 @@ def rows_from_items(pm25_items: Iterable[dict], psi_items: Iterable[dict]) -> di
         readings = item.get("readings", {}).get("pm25_one_hourly", {})
         if not logged_pm25_region_keys:
             logged_pm25_region_keys = True
-            unknown = set(readings) - set(REGIONS)
-            missing = set(REGIONS) - set(readings)
+            unknown = set(readings) - set(API_REGIONS)
+            missing = set(API_REGIONS) - set(readings)
             if unknown or missing:
-                log.warning("pm25_one_hourly region keys seen=%s vs expected REGIONS=%s (unknown=%s, missing=%s)",
-                            sorted(readings), REGIONS, sorted(unknown), sorted(missing))
-        for region in REGIONS:
+                log.warning("pm25_one_hourly region keys seen=%s vs expected API_REGIONS=%s (unknown=%s, missing=%s)",
+                            sorted(readings), API_REGIONS, sorted(unknown), sorted(missing))
+        for region in API_REGIONS:
             if region not in readings:
                 continue
             key = (ts, region)
@@ -164,13 +164,13 @@ def rows_from_items(pm25_items: Iterable[dict], psi_items: Iterable[dict]) -> di
         pm25_24h_readings = all_readings.get(pm25_24h_key, {}) if pm25_24h_key else {}
         if not logged_psi_region_keys:
             logged_psi_region_keys = True
-            unknown = set(psi_readings) - set(REGIONS)
-            missing = set(REGIONS) - set(psi_readings)
+            unknown = set(psi_readings) - set(API_REGIONS)
+            missing = set(API_REGIONS) - set(psi_readings)
             if unknown or missing:
-                log.warning("psi_twenty_four_hourly region keys seen=%s vs expected REGIONS=%s (unknown=%s, missing=%s)",
-                            sorted(psi_readings), REGIONS, sorted(unknown), sorted(missing))
+                log.warning("psi_twenty_four_hourly region keys seen=%s vs expected API_REGIONS=%s (unknown=%s, missing=%s)",
+                            sorted(psi_readings), API_REGIONS, sorted(unknown), sorted(missing))
 
-        for region in REGIONS:
+        for region in API_REGIONS:
             if region not in psi_readings:
                 continue
             key = (ts, region)
@@ -187,7 +187,40 @@ def rows_from_items(pm25_items: Iterable[dict], psi_items: Iterable[dict]) -> di
     if pm25_24h_key_seen is None and psi_items:
         log.info("psi response has no 24-hr PM2.5 field -- back-calculating from psi_twenty_four_hourly")
 
+    synthesize_national(rows)
     return rows
+
+
+def synthesize_national(rows: dict[tuple[str, str], dict]) -> None:
+    """The live API has no "national" region key -- only the five in
+    API_REGIONS. Add a nationwide row per timestamp as the mean of whichever
+    of those five have data, so downstream consumers (the PNG's default
+    region, the map's header banner) still get a headline figure. Mutates
+    `rows` in place, adding a ("timestamp", "national") entry per timestamp
+    that has at least one real region's reading."""
+    by_ts: dict[str, list[dict]] = {}
+    for (ts, region), row in rows.items():
+        if region != "national":
+            by_ts.setdefault(ts, []).append(row)
+
+    def mean(field: str, region_rows: list[dict]):
+        vals = [r[field] for r in region_rows if r.get(field) is not None]
+        return round(sum(vals) / len(vals), 2) if vals else None
+
+    for ts, region_rows in by_ts.items():
+        pm25_1h = mean("pm25_one_hourly", region_rows)
+        psi = mean("psi_twenty_four_hourly", region_rows)
+        pm25_24h = mean("pm25_twenty_four_hourly", region_rows)
+        if pm25_1h is None and psi is None and pm25_24h is None:
+            continue
+        rows[(ts, "national")] = {
+            "timestamp": ts,
+            "region": "national",
+            "pm25_one_hourly": pm25_1h,
+            "psi_twenty_four_hourly": psi,
+            "pm25_twenty_four_hourly": pm25_24h,
+            "pm25_24h_source": "derived_national_mean",
+        }
 
 
 def load_existing() -> dict[tuple[str, str], dict]:

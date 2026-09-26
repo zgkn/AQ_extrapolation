@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import datetime as dt
 
-REGIONS = ["national", "north", "south", "east", "west", "central"]
+# The live API only ever returns these five (confirmed against production --
+# there is no "national" key in either endpoint's readings, despite that
+# being assumed at spec time). "national" is a nationwide aggregate we
+# synthesize ourselves in fetch_data.py by averaging across these five.
+API_REGIONS = ["north", "south", "east", "west", "central"]
+REGIONS = API_REGIONS + ["national"]
 
 API_BASE = "https://api-open.data.gov.sg/v2/real-time/api"
 PM25_URL = f"{API_BASE}/pm25"

@@ -31,6 +31,8 @@ from aq_lib import HISTORY_PATH, compute_payload, parse_ts  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("build_dashboard")
 
+# "national" isn't a region the API reports directly -- fetch_data.py
+# synthesizes it as the mean of the five real regions (see aq_lib.API_REGIONS).
 REGION = "national"
 OUTPUT_PATH = "dashboard.png"
 
