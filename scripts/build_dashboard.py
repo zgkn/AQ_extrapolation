@@ -30,7 +30,7 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(__file__))
-from aq_lib import API_REGIONS, HISTORY_PATH, THRESHOLDS, compute_payload, parse_ts  # noqa: E402
+from aq_lib import API_REGIONS, HISTORY_PATH, SGT, THRESHOLDS, compute_payload, parse_ts  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("build_dashboard")
@@ -126,7 +126,10 @@ def main() -> None:
     ax_psi.set_ylabel("PSI (24-hr)")
     ax_psi.set_xlabel("Time")
     ax_psi.set_title("Solid = actual, dashed = projected (flat 1-hr PM2.5 held constant)", fontsize=11, color="#52514e")
-    ax_psi.xaxis.set_major_formatter(mdates.DateFormatter("%a %H:%M"))
+    # tz must be explicit: matplotlib's DateFormatter silently renders in
+    # UTC otherwise, even given tz-aware (already-SGT) datetimes -- without
+    # this every tick label was quietly 8h off from the "as of" SGT title.
+    ax_psi.xaxis.set_major_formatter(mdates.DateFormatter("%a %H:%M", tz=SGT))
     fig.autofmt_xdate()
 
     fig.suptitle(f"Singapore Haze -- as of {as_of.strftime('%Y-%m-%d %H:%M %Z')}", y=0.98, fontsize=15)

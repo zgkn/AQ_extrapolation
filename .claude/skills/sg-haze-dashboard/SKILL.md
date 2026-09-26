@@ -117,6 +117,12 @@ Given current 24-hr baseline `B` and latest 1-hr reading `X` held flat:
 - **Change region colors**: edit `REGION_COLORS` in `build_dashboard.py`.
   Keep a fixed order and don't cycle/reuse hues across regions --
   see the dataviz skill if adding a 6th+ series.
+- **Any datetime formatting/display added later**: use `aq_lib.SGT`
+  explicitly. `data/history.csv` timestamps already carry `+08:00`, but
+  matplotlib's `DateFormatter` silently renders in UTC unless given
+  `tz=SGT` -- this caused a real bug (chart x-axis ticks were quietly 8h
+  behind the title's SGT "as of" time) until `build_dashboard.py`'s
+  `xaxis.set_major_formatter(...)` call was fixed to pass it.
 - **Debug a bad run**: check the Action's logs for `run type: latest only`
   vs `latest + backfill(...)`, and the `retention: trimmed N row(s)` line.
 - **If pushes start conflicting**: the workflow already does
