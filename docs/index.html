@@ -41,8 +41,18 @@
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 12px;
+    /* The chart has 5 regions x 2 panels of fine detail (axis ticks, a
+       5-entry legend, per-threshold labels) that turns to mush if the image
+       is shrunk to fit a phone's width. Below the chart's own natural size,
+       scroll/pinch to it at full size instead of force-shrinking everything
+       into illegibility -- a wide chart, not a page, is what should scroll. */
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
-  img { width: 100%; height: auto; display: block; border-radius: 6px; }
+  img { display: block; border-radius: 6px; width: 820px; max-width: none; }
+  @media (min-width: 900px) {
+    img { width: 100%; }
+  }
   footer { margin-top: 16px; font-size: 0.78rem; color: var(--muted); line-height: 1.5; }
 </style>
 </head>
