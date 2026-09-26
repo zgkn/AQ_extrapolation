@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import sys
+import time
 from typing import Iterable
 
 import requests
@@ -40,11 +41,32 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("fetch_data")
 
 REQUEST_TIMEOUT = 30
+MAX_RETRIES = 4
+BACKFILL_REQUEST_DELAY_S = 1.5  # pace consecutive backfill calls so we don't trip the API's rate limit
 
-# Candidate keys for a 24-hr avg PM2.5 field on the /psi response, in case
-# data.gov.sg exposes one directly (unconfirmed at write time -- see
-# find_pm25_24h_key below for how this is detected defensively at runtime).
+# 24-hr avg PM2.5 is exposed directly on /psi as `pm25_twenty_four_hourly`
+# (confirmed against the live API); this pattern is a defensive fallback in
+# case data.gov.sg ever renames/removes it -- see find_pm25_24h_key below.
 PM25_24H_KEY_PATTERN = re.compile(r"pm.?2.?5", re.IGNORECASE)
+
+
+def get_with_retry(url: str, params: dict) -> requests.Response:
+    """GET with retry/backoff on 429 and 5xx -- data.gov.sg rate-limits
+    bursts of requests (seen in practice during a multi-day backfill), and
+    honors a Retry-After header on 429."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        if resp.status_code == 429 or resp.status_code >= 500:
+            if attempt == MAX_RETRIES:
+                resp.raise_for_status()
+            retry_after = resp.headers.get("Retry-After")
+            wait = float(retry_after) if retry_after else min(2 ** attempt, 30)
+            log.warning("HTTP %d from %s (attempt %d/%d) -- retrying in %.1fs", resp.status_code, url, attempt, MAX_RETRIES, wait)
+            time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        return resp
+    raise RuntimeError("unreachable")  # loop always returns or raises above
 
 
 def fetch_items(url: str, date: str | None = None) -> tuple[list[dict], str | None]:
@@ -59,8 +81,7 @@ def fetch_items(url: str, date: str | None = None) -> tuple[list[dict], str | No
     while True:
         if token:
             params["paginationToken"] = token
-        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
-        resp.raise_for_status()
+        resp = get_with_retry(url, params)
         payload = resp.json()
         data = payload.get("data", {})
         page_items = data.get("items", [])
@@ -230,9 +251,12 @@ def main() -> None:
                 GAP_THRESHOLD_HOURS,
                 len(days),
             )
-        for day in days:
+        for i, day in enumerate(days):
+            if i > 0:
+                time.sleep(BACKFILL_REQUEST_DELAY_S)
             day_pm25_items, echo1 = fetch_items(PM25_URL, date=day)
             check_date_echo(day, echo1, PM25_URL)
+            time.sleep(BACKFILL_REQUEST_DELAY_S)
             day_psi_items, echo2 = fetch_items(PSI_URL, date=day)
             check_date_echo(day, echo2, PSI_URL)
             day_rows = rows_from_items(day_pm25_items, day_psi_items)

@@ -62,15 +62,18 @@ publishes it.
 - **Gotcha:** some fetchers/caches silently drop `?date=`. Always check the
   response's own echoed date/timestamp against what was requested --
   `fetch_data.check_date_echo()` logs a warning if they don't match.
-- Whether `/psi` also returns a direct 24-hr avg PM2.5 field (e.g.
-  `pm25_twenty_four_hourly`) was **unconfirmed** when this pipeline was
-  built (network access to data.gov.sg was blocked in that build
-  environment). `fetch_data.find_pm25_24h_key()` checks for this field
-  defensively at runtime and prefers it if present; otherwise it falls back
-  to back-calculating from `psi_twenty_four_hourly` via the breakpoint
-  table. Check `data/history.csv`'s `pm25_24h_source` column (`api` vs
-  `calculated`) to see which path is actually active, and update this note
-  once confirmed.
+- **Confirmed against the live API** (first real workflow run): `/psi` does
+  return a direct 24-hr avg PM2.5 field, `pm25_twenty_four_hourly`, so
+  `fetch_data.py` reads it straight rather than back-calculating (the
+  back-calculation path still exists in `find_pm25_24h_key()` as a fallback
+  if that field is ever renamed/removed). Check `data/history.csv`'s
+  `pm25_24h_source` column (`api` vs `calculated`) to confirm which path is
+  active for any given row.
+- **Rate limiting:** the live API 429'd on a burst backfill (6 requests in
+  ~2s during the very first run's 3-day backfill). `fetch_data.get_with_retry()`
+  retries 429/5xx with backoff (honoring `Retry-After`), and the backfill
+  loop paces consecutive day-requests `BACKFILL_REQUEST_DELAY_S` apart. If
+  backfills start failing again, raise that delay or the retry count first.
 
 ## PSI<->PM2.5 breakpoint table
 
