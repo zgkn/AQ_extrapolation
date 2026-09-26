@@ -32,27 +32,23 @@ jobs:
       - name: Fetch latest PM2.5 + PSI data
         run: python scripts/fetch_data.py
 
-      - name: Build dashboard chart
+      - name: Build dashboard (chart + docs/index.html)
         id: build_dashboard
         continue-on-error: true
         run: python scripts/build_dashboard.py
 
-      - name: Build website (Folium map)
-        id: build_map
-        continue-on-error: true
-        run: python scripts/build_map.py
-
       # A build step failing must never block committing data that fetch_data.py
       # already fetched successfully -- that data is real and shouldn't be
       # thrown away because e.g. a chart-rendering bug crashed afterward. So
-      # build steps above are continue-on-error, we commit whatever files
+      # the build step above is continue-on-error, we commit whatever files
       # exist here regardless, and only *afterward* does this job fail (below)
       # so the run still shows red and gets noticed.
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          for f in data/history.csv dashboard.png docs/index.html docs/.nojekyll; do
+          git rm --ignore-unmatch --quiet dashboard.png
+          for f in data/history.csv docs/index.html docs/dashboard.png docs/.nojekyll; do
             [ -e "$f" ] && git add "$f"
           done
           if git diff --cached --quiet; then
@@ -68,8 +64,8 @@ jobs:
             git pull --rebase origin "${GITHUB_REF_NAME}"
           done
 
-      - name: Fail job if a build step failed
-        if: steps.build_dashboard.outcome == 'failure' || steps.build_map.outcome == 'failure'
+      - name: Fail job if the build step failed
+        if: steps.build_dashboard.outcome == 'failure'
         run: |
-          echo "A build step failed (dashboard=${{ steps.build_dashboard.outcome }}, map=${{ steps.build_map.outcome }}); data was still committed above. See that step's log."
+          echo "The build step failed; data was still committed above. See that step's log."
           exit 1

@@ -1,6 +1,6 @@
 ---
 name: sg-haze-dashboard
-description: Rebuild, extend, or debug the Singapore PM2.5/PSI haze-tracking GitHub Actions pipeline in this repo (scripts/fetch_data.py, scripts/build_dashboard.py, scripts/build_map.py, .github/workflows/haze-dashboard.yml, data/history.csv, docs/index.html). Use when asked about this project's haze dashboard, the GitHub Pages map site, PSI projections, data.gov.sg air quality data, or when setting up a similar incremental-fetch-and-commit pipeline elsewhere.
+description: Rebuild, extend, or debug the Singapore PM2.5/PSI haze-tracking GitHub Actions pipeline in this repo (scripts/fetch_data.py, scripts/build_dashboard.py, .github/workflows/haze-dashboard.yml, data/history.csv, docs/index.html, docs/dashboard.png). Use when asked about this project's haze dashboard, the GitHub Pages site, PSI projections, data.gov.sg air quality data, or when setting up a similar incremental-fetch-and-commit pipeline elsewhere.
 ---
 
 # Singapore Haze Dashboard pipeline
@@ -9,37 +9,38 @@ description: Rebuild, extend, or debug the Singapore PM2.5/PSI haze-tracking Git
 
 An hourly GitHub Actions pipeline that tracks Singapore PM2.5 + PSI from
 data.gov.sg and projects when PSI will cross 100/150/200, using
-git-commit-as-persistence (no external DB/cache/artifacts). Publishes both a
-PNG chart and a small GitHub Pages website (a Folium map).
+git-commit-as-persistence (no external DB/cache/artifacts). Publishes a
+GitHub Pages site showing a time-series chart -- PM2.5 and PSI for each of
+the five real regions, with a dashed PSI projection toward the thresholds.
 
 ## Files
 
 - `scripts/aq_lib.py` -- shared constants, the PM2.5<->PSI breakpoint table,
   projection math (`pm25_to_psi`, `psi_to_pm25`, `projected_avg_pm25`,
   `time_to_threshold`), and `compute_payload(rows, region)` -- the one place
-  that turns a region's CSV rows into {history, projection, thresholds}, used
-  by both `build_dashboard.py` and `build_map.py` so their numbers can't drift.
+  that turns a region's CSV rows into {history, projection, thresholds}.
 - `scripts/fetch_data.py` -- incremental fetcher. Each run does a cheap
   "latest only" call (no `date` param) to both endpoints, and additionally
   backfills via `?date=YYYY-MM-DD` per missing day if the last row in
   `data/history.csv` is more than ~2h stale (missed run or first run).
   Dedupes on `(timestamp, region)`, retains 48h of history (dashboard only
   needs 24h; the buffer protects against a missed run needing backfill).
-- `scripts/build_dashboard.py` -- renders `dashboard.png`: two stacked
-  single-axis panels (PSI, then PM2.5 -- deliberately *not* one dual-axis
-  plot, which invents a correlation between two differently-scaled series)
-  with projected PSI (dashed) and threshold lines/ETAs for 100/150/200.
-- `scripts/build_map.py` -- renders `docs/index.html`: a Folium/Leaflet map
-  of Singapore with a colored marker per region (NEA PSI band colors), a
-  popup per marker with current PSI/PM2.5 and threshold ETAs, and a header
-  banner with the national figures. Uses plain `OpenStreetMap` tiles
-  (`tiles="OpenStreetMap"`) deliberately -- CartoDB's basemaps now require an
-  API key, which would break on a public site with no key configured.
-  `REGION_COORDS` are approximate representative points for each region, not
-  official boundaries.
+- `scripts/build_dashboard.py` -- renders both `docs/dashboard.png` and the
+  `docs/index.html` that embeds it (single script, since they're a tightly
+  coupled one-shot render). Two stacked single-axis panels -- PM2.5, then
+  PSI -- deliberately *not* one dual-axis plot, which invents a correlation
+  between two differently-scaled series. Each of the five real regions
+  (`aq_lib.API_REGIONS`) gets a fixed categorical color (`REGION_COLORS`,
+  never reused/cycled) shared between both panels. The PSI panel adds a
+  dashed flat-PM2.5 projection per region and solid threshold lines at
+  100/150/200; where a dashed line crosses a threshold line **is** that
+  region's ETA -- deliberately no per-region ETA text, since 5 regions x 3
+  thresholds of text would clutter the chart (the underlying numbers are
+  still in `compute_payload`'s `thresholds` field if a text/table view is
+  ever wanted). Also writes `docs/.nojekyll` (see below).
 - `.github/workflows/haze-dashboard.yml` -- hourly cron + `workflow_dispatch`,
-  runs fetch -> build_dashboard -> build_map -> `git pull --rebase` -> commit
-  + push `data/history.csv`, `dashboard.png`, and `docs/index.html`.
+  runs fetch -> build_dashboard -> `git pull --rebase` -> commit + push
+  `data/history.csv`, `docs/dashboard.png`, `docs/index.html`, `docs/.nojekyll`.
 
 ## GitHub Pages
 
@@ -106,14 +107,16 @@ Given current 24-hr baseline `B` and latest 1-hr reading `X` held flat:
 
 ## Common follow-up tasks
 
-- **Add a region to the PNG**: `build_dashboard.py` currently hardcodes
-  `REGION = "national"`; `data/history.csv` already stores all six regions
-  (the map already plots five of them), so add a loop or a CLI arg rather
-  than refetching.
-- **Change thresholds**: edit `THRESHOLDS` in `aq_lib.py` (shared by both
-  `build_dashboard.py` and `build_map.py`/`compute_payload`).
-- **Change PSI band colors/cutoffs on the map**: edit `PSI_BANDS` in
-  `build_map.py`.
+- **Add/remove a plotted region**: edit `build_dashboard.py`'s
+  `REGION_COLORS` dict (and iterate `API_REGIONS` accordingly) --
+  `data/history.csv` also stores a synthesized `national` row per timestamp
+  (see below) if a nationwide line/figure is ever wanted again.
+- **Change thresholds**: edit `THRESHOLDS` in `aq_lib.py` -- both the
+  chart's threshold lines and `compute_payload`'s ETA math import it from
+  there, so there's one place to change.
+- **Change region colors**: edit `REGION_COLORS` in `build_dashboard.py`.
+  Keep a fixed order and don't cycle/reuse hues across regions --
+  see the dataviz skill if adding a 6th+ series.
 - **Debug a bad run**: check the Action's logs for `run type: latest only`
   vs `latest + backfill(...)`, and the `retention: trimmed N row(s)` line.
 - **If pushes start conflicting**: the workflow already does
