@@ -52,6 +52,12 @@ REGION_COLORS = {
 }
 THRESHOLD_COLOR = "#898781"
 
+# The chart is displayed at a fixed 820px CSS width (see write_html) rather
+# than shrunk to fit a phone screen, but it's still smaller than a full
+# desktop figure -- bump the default sizes up from matplotlib's defaults so
+# axis ticks and labels stay legible at that width.
+plt.rcParams.update({"font.size": 12, "axes.titlesize": 13, "axes.labelsize": 12})
+
 
 def load_all_rows() -> dict[str, list[dict]]:
     by_region: dict[str, list[dict]] = {r: [] for r in API_REGIONS}
@@ -110,7 +116,7 @@ def main() -> None:
             textcoords="offset points",
             ha="right",
             va="bottom",
-            fontsize=8,
+            fontsize=10,
             color="#52514e",
             bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor="none", alpha=0.75),
         )
@@ -119,20 +125,20 @@ def main() -> None:
 
     ax_psi.set_ylabel("PSI (24-hr)")
     ax_psi.set_xlabel("Time")
-    ax_psi.set_title("Solid = actual, dashed = projected (flat 1-hr PM2.5 held constant)", fontsize=10, color="#52514e")
+    ax_psi.set_title("Solid = actual, dashed = projected (flat 1-hr PM2.5 held constant)", fontsize=11, color="#52514e")
     ax_psi.xaxis.set_major_formatter(mdates.DateFormatter("%a %H:%M"))
     fig.autofmt_xdate()
 
-    fig.suptitle(f"Singapore Haze -- as of {as_of.strftime('%Y-%m-%d %H:%M %Z')}", y=0.98, fontsize=13)
+    fig.suptitle(f"Singapore Haze -- as of {as_of.strftime('%Y-%m-%d %H:%M %Z')}", y=0.98, fontsize=15)
     handles, labels = ax_pm25.get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.925), ncol=len(handles), fontsize=9, frameon=False)
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.925), ncol=len(handles), fontsize=11, frameon=False)
 
     fig.text(
         0.01,
         0.01,
         "Model note: PSI here tracks only the PM2.5 sub-index (real PSI = max of six pollutants); "
         "the dashed projection assumes each region's latest 1-hr PM2.5 holds flat, not a forecast.",
-        fontsize=7,
+        fontsize=8.5,
         color="gray",
     )
 
@@ -193,8 +199,18 @@ def write_html(as_of: dt.datetime) -> None:
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 12px;
+    /* The chart has 5 regions x 2 panels of fine detail (axis ticks, a
+       5-entry legend, per-threshold labels) that turns to mush if the image
+       is shrunk to fit a phone's width. Below the chart's own natural size,
+       scroll/pinch to it at full size instead of force-shrinking everything
+       into illegibility -- a wide chart, not a page, is what should scroll. */
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }}
-  img {{ width: 100%; height: auto; display: block; border-radius: 6px; }}
+  img {{ display: block; border-radius: 6px; width: 820px; max-width: none; }}
+  @media (min-width: 900px) {{
+    img {{ width: 100%; }}
+  }}
   footer {{ margin-top: 16px; font-size: 0.78rem; color: var(--muted); line-height: 1.5; }}
 </style>
 </head>
