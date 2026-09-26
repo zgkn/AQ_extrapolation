@@ -33,16 +33,28 @@ jobs:
         run: python scripts/fetch_data.py
 
       - name: Build dashboard chart
+        id: build_dashboard
+        continue-on-error: true
         run: python scripts/build_dashboard.py
 
       - name: Build website (Folium map)
+        id: build_map
+        continue-on-error: true
         run: python scripts/build_map.py
 
+      # A build step failing must never block committing data that fetch_data.py
+      # already fetched successfully -- that data is real and shouldn't be
+      # thrown away because e.g. a chart-rendering bug crashed afterward. So
+      # build steps above are continue-on-error, we commit whatever files
+      # exist here regardless, and only *afterward* does this job fail (below)
+      # so the run still shows red and gets noticed.
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/history.csv dashboard.png docs/index.html docs/.nojekyll
+          for f in data/history.csv dashboard.png docs/index.html docs/.nojekyll; do
+            [ -e "$f" ] && git add "$f"
+          done
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
@@ -55,3 +67,9 @@ jobs:
             sleep $((i * 3))
             git pull --rebase origin "${GITHUB_REF_NAME}"
           done
+
+      - name: Fail job if a build step failed
+        if: steps.build_dashboard.outcome == 'failure' || steps.build_map.outcome == 'failure'
+        run: |
+          echo "A build step failed (dashboard=${{ steps.build_dashboard.outcome }}, map=${{ steps.build_map.outcome }}); data was still committed above. See that step's log."
+          exit 1

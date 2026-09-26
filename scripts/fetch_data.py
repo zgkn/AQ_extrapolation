@@ -129,12 +129,20 @@ def rows_from_items(pm25_items: Iterable[dict], psi_items: Iterable[dict]) -> di
     rows: dict[tuple[str, str], dict] = {}
 
     pm25_24h_key_seen = None
+    logged_pm25_region_keys = False
 
     for item in pm25_items:
         ts = item.get("timestamp")
         if not ts:
             continue
         readings = item.get("readings", {}).get("pm25_one_hourly", {})
+        if not logged_pm25_region_keys:
+            logged_pm25_region_keys = True
+            unknown = set(readings) - set(REGIONS)
+            missing = set(REGIONS) - set(readings)
+            if unknown or missing:
+                log.warning("pm25_one_hourly region keys seen=%s vs expected REGIONS=%s (unknown=%s, missing=%s)",
+                            sorted(readings), REGIONS, sorted(unknown), sorted(missing))
         for region in REGIONS:
             if region not in readings:
                 continue
@@ -142,6 +150,7 @@ def rows_from_items(pm25_items: Iterable[dict], psi_items: Iterable[dict]) -> di
             row = rows.setdefault(key, {"timestamp": ts, "region": region})
             row["pm25_one_hourly"] = readings[region]
 
+    logged_psi_region_keys = False
     for item in psi_items:
         ts = item.get("timestamp")
         if not ts:
@@ -153,6 +162,13 @@ def rows_from_items(pm25_items: Iterable[dict], psi_items: Iterable[dict]) -> di
             pm25_24h_key_seen = pm25_24h_key
             log.info("psi response includes a 24-hr PM2.5 field: %r -- using it directly", pm25_24h_key)
         pm25_24h_readings = all_readings.get(pm25_24h_key, {}) if pm25_24h_key else {}
+        if not logged_psi_region_keys:
+            logged_psi_region_keys = True
+            unknown = set(psi_readings) - set(REGIONS)
+            missing = set(REGIONS) - set(psi_readings)
+            if unknown or missing:
+                log.warning("psi_twenty_four_hourly region keys seen=%s vs expected REGIONS=%s (unknown=%s, missing=%s)",
+                            sorted(psi_readings), REGIONS, sorted(unknown), sorted(missing))
 
         for region in REGIONS:
             if region not in psi_readings:
