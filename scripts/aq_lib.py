@@ -28,7 +28,8 @@ PM25_URL = f"{API_BASE}/pm25"
 PSI_URL = f"{API_BASE}/psi"
 
 HISTORY_PATH = "data/history.csv"
-RETENTION_HOURS = 48
+HISTORY_WINDOW_HOURS = 48  # how much history the chart displays
+RETENTION_HOURS = 72  # HISTORY_WINDOW_HOURS + a buffer so a missed run can still backfill
 GAP_THRESHOLD_HOURS = 2  # if last row is older than this vs. now, treat as a missed run
 
 CSV_FIELDS = [
@@ -156,7 +157,7 @@ def compute_payload(rows: list[dict], region: str):
     pm25_24h_source = [r.get("pm25_24h_source") or None for r in rows]
 
     now = times[-1]
-    window_start = now - dt.timedelta(hours=24)
+    window_start = now - dt.timedelta(hours=HISTORY_WINDOW_HOURS)
     idx = [i for i, t in enumerate(times) if t >= window_start] or list(range(len(times)))
 
     history = [

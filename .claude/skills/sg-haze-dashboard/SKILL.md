@@ -23,8 +23,9 @@ the five real regions, with a dashed PSI projection toward the thresholds.
   "latest only" call (no `date` param) to both endpoints, and additionally
   backfills via `?date=YYYY-MM-DD` per missing day if the last row in
   `data/history.csv` is more than ~2h stale (missed run or first run).
-  Dedupes on `(timestamp, region)`, retains 48h of history (dashboard only
-  needs 24h; the buffer protects against a missed run needing backfill).
+  Dedupes on `(timestamp, region)`, retains `aq_lib.RETENTION_HOURS` (72h)
+  of history -- the dashboard only shows `aq_lib.HISTORY_WINDOW_HOURS` (48h)
+  of it; the extra buffer protects against a missed run needing backfill.
 - `scripts/build_dashboard.py` -- renders both `docs/dashboard.png` and the
   `docs/index.html` that embeds it (single script, since they're a tightly
   coupled one-shot render). Two stacked single-axis panels -- PM2.5, then
@@ -114,6 +115,10 @@ Given current 24-hr baseline `B` and latest 1-hr reading `X` held flat:
 - **Change thresholds**: edit `THRESHOLDS` in `aq_lib.py` -- both the
   chart's threshold lines and `compute_payload`'s ETA math import it from
   there, so there's one place to change.
+- **Change how much history the chart shows**: edit
+  `HISTORY_WINDOW_HOURS` in `aq_lib.py` (currently 48h). If you push it
+  past `RETENTION_HOURS` (72h), raise that too, or the chart will just
+  show whatever's left after trimming.
 - **Change region colors**: edit `REGION_COLORS` in `build_dashboard.py`.
   Keep a fixed order and don't cycle/reuse hues across regions --
   see the dataviz skill if adding a 6th+ series.
