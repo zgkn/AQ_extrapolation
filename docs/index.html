@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html>
+<head>
+    
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap-glyphicons.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.2.0/css/all.min.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/python-visualization/folium/folium/templates/leaflet.awesome.rotate.min.css"/>
+    
+            <meta name="viewport" content="width=device-width,
+                initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <style>
+                #map_81fdfb031bc60917bec80d30609145ca {
+                    position: relative;
+                    width: 100.0%;
+                    height: 100.0%;
+                    left: 0.0%;
+                    top: 0.0%;
+                }
+                .leaflet-container { font-size: 1rem; }
+            </style>
+
+            <style>html, body {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+            }
+            </style>
+
+            <style>#map {
+                position:absolute;
+                top:0;
+                bottom:0;
+                right:0;
+                left:0;
+                }
+            </style>
+
+            <script>
+                L_NO_TOUCH = false;
+                L_DISABLE_3D = false;
+            </script>
+
+        
+</head>
+<body>
+    
+    
+    <div style="position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 9999;
+                background: white; padding: 10px 20px; border-radius: 8px;
+                box-shadow: 0 1px 4px rgba(0,0,0,0.3); font-family: system-ui, sans-serif;
+                font-size: 13px; color: #222; text-align: center; max-width: 92vw;">
+      <div style="font-weight:700; font-size: 15px; margin-bottom: 2px;">Singapore Haze Dashboard</div>
+      <div>No national data yet.</div>
+    </div>
+    
+    
+    <div style="position: fixed; bottom: 20px; left: 20px; z-index: 9999;
+                background: white; padding: 10px 14px; border-radius: 8px;
+                box-shadow: 0 1px 4px rgba(0,0,0,0.3); font-family: system-ui, sans-serif;
+                font-size: 12px; color: #222;">
+      <div style="font-weight:600; margin-bottom: 4px;">PSI band</div>
+      <div style="display:flex;align-items:center;gap:6px;margin:2px 0;"><span style="width:12px;height:12px;border-radius:50%;background:#2ecc71;display:inline-block;"></span><span>Good (≤50)</span></div><div style="display:flex;align-items:center;gap:6px;margin:2px 0;"><span style="width:12px;height:12px;border-radius:50%;background:#f1c40f;display:inline-block;"></span><span>Moderate (≤100)</span></div><div style="display:flex;align-items:center;gap:6px;margin:2px 0;"><span style="width:12px;height:12px;border-radius:50%;background:#e67e22;display:inline-block;"></span><span>Unhealthy (≤200)</span></div><div style="display:flex;align-items:center;gap:6px;margin:2px 0;"><span style="width:12px;height:12px;border-radius:50%;background:#e74c3c;display:inline-block;"></span><span>Very Unhealthy (≤300)</span></div><div style="display:flex;align-items:center;gap:6px;margin:2px 0;"><span style="width:12px;height:12px;border-radius:50%;background:#7f1734;display:inline-block;"></span><span>Hazardous (≤500+)</span></div>
+    </div>
+    
+    
+    <div style="position: fixed; bottom: 4px; left: 50%; transform: translateX(-50%); z-index: 9999;
+                background: rgba(255,255,255,0.85); padding: 4px 10px; border-radius: 6px;
+                font-family: system-ui, sans-serif; font-size: 10px; color: #555; text-align: center;
+                max-width: 90vw;">
+      Model note: PSI here tracks only the PM2.5 sub-index (real PSI = max of six pollutants);
+      the flat-PM2.5 projection is a simplification, not a forecast. Data: data.gov.sg.
+    </div>
+    
+    
+            <div class="folium-map" id="map_81fdfb031bc60917bec80d30609145ca" ></div>
+        
+</body>
+<script>
+    
+    
+            var map_81fdfb031bc60917bec80d30609145ca = L.map(
+                "map_81fdfb031bc60917bec80d30609145ca",
+                {
+                    center: [1.3521, 103.8198],
+                    crs: L.CRS.EPSG3857,
+                    ...{
+  "zoom": 12,
+  "zoomControl": true,
+  "preferCanvas": false,
+}
+
+                }
+            );
+
+            
+
+        
+    
+            var tile_layer_38879a1207375db84862039eb988ec3f = L.tileLayer(
+                "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                {
+  "minZoom": 0,
+  "maxZoom": 19,
+  "maxNativeZoom": 19,
+  "noWrap": false,
+  "attribution": "\u0026copy; \u003ca href=\"https://www.openstreetmap.org/copyright\"\u003eOpenStreetMap\u003c/a\u003e contributors",
+  "subdomains": "abc",
+  "detectRetina": false,
+  "tms": false,
+  "opacity": 1,
+}
+
+            );
+        
+    
+            tile_layer_38879a1207375db84862039eb988ec3f.addTo(map_81fdfb031bc60917bec80d30609145ca);
+        
+    
+            var circle_marker_bbb2f3b8ff0e474997186ed21385fd77 = L.circleMarker(
+                [1.436, 103.786],
+                {"bubblingMouseEvents": true, "color": "#f1c40f", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#f1c40f", "fillOpacity": 0.75, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 26, "stroke": true, "weight": 2}
+            ).addTo(map_81fdfb031bc60917bec80d30609145ca);
+        
+    
+        var popup_9b19f38e7588dc063737367552a3055e = L.popup({
+  "maxWidth": 300,
+});
+
+        
+            
+                var html_8da76ca07f8c6a21f64a7566a6f49f5b = $(`<div id="html_8da76ca07f8c6a21f64a7566a6f49f5b" style="width: 100.0%; height: 100.0%;">     <div style="font-family: system-ui, sans-serif; font-size: 13px; min-width: 220px;">       <b>North</b><br>       As of Sun 27 Sep, 00:00 SGT<hr style="margin:4px 0;">       PSI (24-hr): <b>82</b> (Moderate)<br>       PM2.5 (1-hr): 67.0 µg/m³<br>       PM2.5 (24-hr avg): 40.0 µg/m³        <span style="color:#888;">(api)</span>       <hr style="margin:4px 0;">       <div style="font-size:12px;">PSI 100: ETA Sun 27 Sep, 13:41 (+13.7h)<br>PSI 150: not reachable in 24h flat (needs X≈103µg/m³)<br>PSI 200: not reachable in 24h flat (needs X≈150µg/m³)</div>     </div>     </div>`)[0];
+                popup_9b19f38e7588dc063737367552a3055e.setContent(html_8da76ca07f8c6a21f64a7566a6f49f5b);
+            
+        
+
+        circle_marker_bbb2f3b8ff0e474997186ed21385fd77.bindPopup(popup_9b19f38e7588dc063737367552a3055e)
+        ;
+
+        
+    
+    
+            circle_marker_bbb2f3b8ff0e474997186ed21385fd77.bindTooltip(
+                `<div>
+                     North: PSI 82
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var marker_b56e01e7dcf03e4ae1070924dfacb6a1 = L.marker(
+                [1.436, 103.786],
+                {
+}
+            ).addTo(map_81fdfb031bc60917bec80d30609145ca);
+        
+    
+            var div_icon_9d64edb4d2f4987b6e3c9fe66dd6bb2d = L.divIcon({
+  "html": "\n                \u003cdiv style=\"font-size:13px;font-weight:700;color:white;text-align:center;\n                            width:52px;transform:translate(-13px,-9px);\"\u003e\n                  82\n                \u003c/div\u003e",
+  "className": "empty",
+});
+        
+    
+                marker_b56e01e7dcf03e4ae1070924dfacb6a1.setIcon(div_icon_9d64edb4d2f4987b6e3c9fe66dd6bb2d);
+            
+    
+            var circle_marker_8549aad53fd3986212ce969bd8d484f6 = L.circleMarker(
+                [1.265, 103.82],
+                {"bubblingMouseEvents": true, "color": "#f1c40f", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#f1c40f", "fillOpacity": 0.75, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 26, "stroke": true, "weight": 2}
+            ).addTo(map_81fdfb031bc60917bec80d30609145ca);
+        
+    
+        var popup_e90faac7d6f6130312ec62257da900d8 = L.popup({
+  "maxWidth": 300,
+});
+
+        
+            
+                var html_f6a41e5a633d2d4c35d66c7cecd0bdd6 = $(`<div id="html_f6a41e5a633d2d4c35d66c7cecd0bdd6" style="width: 100.0%; height: 100.0%;">     <div style="font-family: system-ui, sans-serif; font-size: 13px; min-width: 220px;">       <b>South</b><br>       As of Sun 27 Sep, 00:00 SGT<hr style="margin:4px 0;">       PSI (24-hr): <b>87</b> (Moderate)<br>       PM2.5 (1-hr): 76.0 µg/m³<br>       PM2.5 (24-hr avg): 44.0 µg/m³        <span style="color:#888;">(api)</span>       <hr style="margin:4px 0;">       <div style="font-size:12px;">PSI 100: ETA Sun 27 Sep, 08:33 (+8.5h)<br>PSI 150: not reachable in 24h flat (needs X≈103µg/m³)<br>PSI 200: not reachable in 24h flat (needs X≈150µg/m³)</div>     </div>     </div>`)[0];
+                popup_e90faac7d6f6130312ec62257da900d8.setContent(html_f6a41e5a633d2d4c35d66c7cecd0bdd6);
+            
+        
+
+        circle_marker_8549aad53fd3986212ce969bd8d484f6.bindPopup(popup_e90faac7d6f6130312ec62257da900d8)
+        ;
+
+        
+    
+    
+            circle_marker_8549aad53fd3986212ce969bd8d484f6.bindTooltip(
+                `<div>
+                     South: PSI 87
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var marker_81acf5a95ffa43eca9b7268509f24f42 = L.marker(
+                [1.265, 103.82],
+                {
+}
+            ).addTo(map_81fdfb031bc60917bec80d30609145ca);
+        
+    
+            var div_icon_1b201066fc9daaaa53ecbc30f8d66b22 = L.divIcon({
+  "html": "\n                \u003cdiv style=\"font-size:13px;font-weight:700;color:white;text-align:center;\n                            width:52px;transform:translate(-13px,-9px);\"\u003e\n                  87\n                \u003c/div\u003e",
+  "className": "empty",
+});
+        
+    
+                marker_81acf5a95ffa43eca9b7268509f24f42.setIcon(div_icon_1b201066fc9daaaa53ecbc30f8d66b22);
+            
+    
+            var circle_marker_d5a26b4014ffb3119860e1140d26bbbd = L.circleMarker(
+                [1.34, 103.95],
+                {"bubblingMouseEvents": true, "color": "#e67e22", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#e67e22", "fillOpacity": 0.75, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 26, "stroke": true, "weight": 2}
+            ).addTo(map_81fdfb031bc60917bec80d30609145ca);
+        
+    
+        var popup_754d1886d44c13085513719c65dcb414 = L.popup({
+  "maxWidth": 300,
+});
+
+        
+            
+                var html_65a409fb301c3606ff444bc09cb9b2b6 = $(`<div id="html_65a409fb301c3606ff444bc09cb9b2b6" style="width: 100.0%; height: 100.0%;">     <div style="font-family: system-ui, sans-serif; font-size: 13px; min-width: 220px;">       <b>East</b><br>       As of Sun 27 Sep, 00:00 SGT<hr style="margin:4px 0;">       PSI (24-hr): <b>103</b> (Unhealthy)<br>       PM2.5 (1-hr): 95.0 µg/m³<br>       PM2.5 (24-hr avg): 58.0 µg/m³        <span style="color:#888;">(api)</span>       <hr style="margin:4px 0;">       <div style="font-size:12px;">PSI 100: not reachable in 24h flat (needs X≈55µg/m³)<br>PSI 150: not reachable in 24h flat (needs X≈103µg/m³)<br>PSI 200: not reachable in 24h flat (needs X≈150µg/m³)</div>     </div>     </div>`)[0];
+                popup_754d1886d44c13085513719c65dcb414.setContent(html_65a409fb301c3606ff444bc09cb9b2b6);
+            
+        
+
+        circle_marker_d5a26b4014ffb3119860e1140d26bbbd.bindPopup(popup_754d1886d44c13085513719c65dcb414)
+        ;
+
+        
+    
+    
+            circle_marker_d5a26b4014ffb3119860e1140d26bbbd.bindTooltip(
+                `<div>
+                     East: PSI 103
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var marker_25acc8f1d191b2b220e78fa8a8ecb20b = L.marker(
+                [1.34, 103.95],
+                {
+}
+            ).addTo(map_81fdfb031bc60917bec80d30609145ca);
+        
+    
+            var div_icon_106b74e98ec64002501417581df945a2 = L.divIcon({
+  "html": "\n                \u003cdiv style=\"font-size:13px;font-weight:700;color:white;text-align:center;\n                            width:52px;transform:translate(-13px,-9px);\"\u003e\n                  103\n                \u003c/div\u003e",
+  "className": "empty",
+});
+        
+    
+                marker_25acc8f1d191b2b220e78fa8a8ecb20b.setIcon(div_icon_106b74e98ec64002501417581df945a2);
+            
+    
+            var circle_marker_ab022491b60f16148914806f9b0a960e = L.circleMarker(
+                [1.345, 103.7],
+                {"bubblingMouseEvents": true, "color": "#f1c40f", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#f1c40f", "fillOpacity": 0.75, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 26, "stroke": true, "weight": 2}
+            ).addTo(map_81fdfb031bc60917bec80d30609145ca);
+        
+    
+        var popup_38ceb0ac88fd03e2d1d02cc2e7521579 = L.popup({
+  "maxWidth": 300,
+});
+
+        
+            
+                var html_26ec391aa6a2a63e9e1f32b606f4be56 = $(`<div id="html_26ec391aa6a2a63e9e1f32b606f4be56" style="width: 100.0%; height: 100.0%;">     <div style="font-family: system-ui, sans-serif; font-size: 13px; min-width: 220px;">       <b>West</b><br>       As of Sun 27 Sep, 00:00 SGT<hr style="margin:4px 0;">       PSI (24-hr): <b>99</b> (Moderate)<br>       PM2.5 (1-hr): 79.0 µg/m³<br>       PM2.5 (24-hr avg): 54.0 µg/m³        <span style="color:#888;">(api)</span>       <hr style="margin:4px 0;">       <div style="font-size:12px;">PSI 100: ETA Sun 27 Sep, 01:20 (+1.3h)<br>PSI 150: not reachable in 24h flat (needs X≈103µg/m³)<br>PSI 200: not reachable in 24h flat (needs X≈150µg/m³)</div>     </div>     </div>`)[0];
+                popup_38ceb0ac88fd03e2d1d02cc2e7521579.setContent(html_26ec391aa6a2a63e9e1f32b606f4be56);
+            
+        
+
+        circle_marker_ab022491b60f16148914806f9b0a960e.bindPopup(popup_38ceb0ac88fd03e2d1d02cc2e7521579)
+        ;
+
+        
+    
+    
+            circle_marker_ab022491b60f16148914806f9b0a960e.bindTooltip(
+                `<div>
+                     West: PSI 99
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var marker_da60b0f86200a978a7239a3c27c4f83b = L.marker(
+                [1.345, 103.7],
+                {
+}
+            ).addTo(map_81fdfb031bc60917bec80d30609145ca);
+        
+    
+            var div_icon_4dc2c1bd5cc1ce9039496413e0cb6f97 = L.divIcon({
+  "html": "\n                \u003cdiv style=\"font-size:13px;font-weight:700;color:white;text-align:center;\n                            width:52px;transform:translate(-13px,-9px);\"\u003e\n                  99\n                \u003c/div\u003e",
+  "className": "empty",
+});
+        
+    
+                marker_da60b0f86200a978a7239a3c27c4f83b.setIcon(div_icon_4dc2c1bd5cc1ce9039496413e0cb6f97);
+            
+    
+            var circle_marker_353f31e224576a1a8e898ab4cb49ac27 = L.circleMarker(
+                [1.335, 103.82],
+                {"bubblingMouseEvents": true, "color": "#e67e22", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#e67e22", "fillOpacity": 0.75, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 26, "stroke": true, "weight": 2}
+            ).addTo(map_81fdfb031bc60917bec80d30609145ca);
+        
+    
+        var popup_aa5eedad0e826d997dd48c28a0d10e8c = L.popup({
+  "maxWidth": 300,
+});
+
+        
+            
+                var html_af9ea8761d84356f200ff8ab0c0ffd0f = $(`<div id="html_af9ea8761d84356f200ff8ab0c0ffd0f" style="width: 100.0%; height: 100.0%;">     <div style="font-family: system-ui, sans-serif; font-size: 13px; min-width: 220px;">       <b>Central</b><br>       As of Sun 27 Sep, 00:00 SGT<hr style="margin:4px 0;">       PSI (24-hr): <b>119</b> (Unhealthy)<br>       PM2.5 (1-hr): 133.0 µg/m³<br>       PM2.5 (24-hr avg): 73.0 µg/m³        <span style="color:#888;">(api)</span>       <hr style="margin:4px 0;">       <div style="font-size:12px;">PSI 100: not reachable in 24h flat (needs X≈55µg/m³)<br>PSI 150: ETA Sun 27 Sep, 11:57 (+12.0h)<br>PSI 200: not reachable in 24h flat (needs X≈150µg/m³)</div>     </div>     </div>`)[0];
+                popup_aa5eedad0e826d997dd48c28a0d10e8c.setContent(html_af9ea8761d84356f200ff8ab0c0ffd0f);
+            
+        
+
+        circle_marker_353f31e224576a1a8e898ab4cb49ac27.bindPopup(popup_aa5eedad0e826d997dd48c28a0d10e8c)
+        ;
+
+        
+    
+    
+            circle_marker_353f31e224576a1a8e898ab4cb49ac27.bindTooltip(
+                `<div>
+                     Central: PSI 119
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var marker_0d52aa95d525f9dff5649b6a609294c0 = L.marker(
+                [1.335, 103.82],
+                {
+}
+            ).addTo(map_81fdfb031bc60917bec80d30609145ca);
+        
+    
+            var div_icon_20e37260a666be40a7904af5f5a5a1e6 = L.divIcon({
+  "html": "\n                \u003cdiv style=\"font-size:13px;font-weight:700;color:white;text-align:center;\n                            width:52px;transform:translate(-13px,-9px);\"\u003e\n                  119\n                \u003c/div\u003e",
+  "className": "empty",
+});
+        
+    
+                marker_0d52aa95d525f9dff5649b6a609294c0.setIcon(div_icon_20e37260a666be40a7904af5f5a5a1e6);
+            
+</script>
+</html>
