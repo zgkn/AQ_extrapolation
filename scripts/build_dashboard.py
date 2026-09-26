@@ -1,13 +1,20 @@
-"""Builds docs/index.html + docs/dashboard.png: time-series PM2.5 and PSI
-for Singapore's five real reporting regions (north/south/east/west/central),
-with a flat-PM2.5 projection on the PSI panel extrapolating toward the
-100/150/200 thresholds.
+"""Builds docs/data.json (the numbers) + docs/index.html (a static page
+that renders them as an interactive SVG chart -- drag to pan, scroll/pinch
+to zoom, both the time-series PM2.5 and PSI panels for Singapore's five
+real reporting regions (north/south/east/west/central), with a flat-PM2.5
+projection on the PSI panel extrapolating toward the 100/150/200
+thresholds).
 
 Two stacked single-axis panels (PM2.5, then PSI) -- never one dual-axis
 plot, which would invent a correlation between two differently-scaled
 series. Each region gets a fixed categorical color (a validated
 colorblind-safe order, never cycled), shared between both panels so a
 region reads as the same color throughout.
+
+index.html is static boilerplate (same bytes every run); only data.json
+changes. All the chart math (projection, thresholds, breakpoints) stays in
+Python/aq_lib -- the browser only renders and pans/zooms already-computed
+numbers, it doesn't recompute anything.
 
 CAVEATS (see aq_lib.py for the PSI-modeling one):
   - The projection assumes each region's latest 1-hr PM2.5 reading holds
@@ -18,31 +25,26 @@ CAVEATS (see aq_lib.py for the PSI-modeling one):
 from __future__ import annotations
 
 import csv
-import datetime as dt
+import json
 import logging
 import os
 import sys
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
-
 sys.path.insert(0, os.path.dirname(__file__))
-from aq_lib import API_REGIONS, HISTORY_PATH, SGT, THRESHOLDS, compute_payload, parse_ts  # noqa: E402
+from aq_lib import API_REGIONS, HISTORY_PATH, compute_payload  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("build_dashboard")
 
 DOCS_DIR = "docs"
-CHART_PATH = os.path.join(DOCS_DIR, "dashboard.png")
+DATA_PATH = os.path.join(DOCS_DIR, "data.json")
 HTML_PATH = os.path.join(DOCS_DIR, "index.html")
 
 # Fixed categorical order -- the first five slots of a colorblind-validated
 # eight-hue palette (worst adjacent CVD deltaE 9.1 light / 8.4 dark across
 # the full eight; a fortiori across five). Assigned once per region and
-# never reused/cycled/reordered by data.
+# never reused/cycled/reordered by data. Kept in sync with docs/index.html's
+# own copy (JS can't import Python constants).
 REGION_COLORS = {
     "north": "#2a78d6",
     "south": "#eb6834",
@@ -50,13 +52,6 @@ REGION_COLORS = {
     "west": "#eda100",
     "central": "#e87ba4",
 }
-THRESHOLD_COLOR = "#898781"
-
-# The chart is displayed at a fixed 820px CSS width (see write_html) rather
-# than shrunk to fit a phone screen, but it's still smaller than a full
-# desktop figure -- bump the default sizes up from matplotlib's defaults so
-# axis ticks and labels stay legible at that width.
-plt.rcParams.update({"font.size": 12, "axes.titlesize": 13, "axes.labelsize": 12})
 
 
 def load_all_rows() -> dict[str, list[dict]]:
@@ -85,72 +80,17 @@ def main() -> None:
     if not payloads:
         raise SystemExit("no region had any data -- refusing to build an empty chart")
 
-    as_of = max(parse_ts(p["as_of"]) for p in payloads.values())
-
-    fig, (ax_pm25, ax_psi) = plt.subplots(2, 1, figsize=(11, 8.3), sharex=True)
-
-    for region in API_REGIONS:
-        payload = payloads.get(region)
-        if payload is None:
-            continue
-        color = REGION_COLORS[region]
-        hist_t = [parse_ts(h["t"]) for h in payload["history"]]
-        hist_pm25 = [h["pm25_1h"] for h in payload["history"]]
-        hist_psi = [h["psi"] for h in payload["history"]]
-
-        ax_pm25.plot(hist_t, hist_pm25, color=color, linewidth=2, label=region.capitalize())
-        ax_psi.plot(hist_t, hist_psi, color=color, linewidth=2, label=region.capitalize())
-
-        if payload["projection"]:
-            proj_t = [parse_ts(p["t"]) for p in payload["projection"]]
-            proj_psi = [p["psi"] for p in payload["projection"]]
-            ax_psi.plot(proj_t, proj_psi, color=color, linewidth=2, linestyle="--", alpha=0.6)
-
-    for threshold in THRESHOLDS:
-        ax_psi.axhline(threshold, color=THRESHOLD_COLOR, linewidth=1)
-        ax_psi.annotate(
-            f"PSI {threshold}",
-            xy=(0.995, threshold),
-            xycoords=("axes fraction", "data"),
-            xytext=(-4, 4),
-            textcoords="offset points",
-            ha="right",
-            va="bottom",
-            fontsize=10,
-            color="#52514e",
-            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor="none", alpha=0.75),
-        )
-
-    ax_pm25.set_ylabel("PM2.5 (µg/m³, 1-hr)")
-
-    ax_psi.set_ylabel("PSI (24-hr)")
-    ax_psi.set_xlabel("Time")
-    ax_psi.set_title("Solid = actual, dashed = projected (flat 1-hr PM2.5 held constant)", fontsize=11, color="#52514e")
-    # tz must be explicit: matplotlib's DateFormatter silently renders in
-    # UTC otherwise, even given tz-aware (already-SGT) datetimes -- without
-    # this every tick label was quietly 8h off from the "as of" SGT title.
-    ax_psi.xaxis.set_major_formatter(mdates.DateFormatter("%a %H:%M", tz=SGT))
-    fig.autofmt_xdate()
-
-    fig.suptitle(f"Singapore Haze -- as of {as_of.strftime('%Y-%m-%d %H:%M %Z')}", y=0.98, fontsize=15)
-    handles, labels = ax_pm25.get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.925), ncol=len(handles), fontsize=11, frameon=False)
-
-    fig.text(
-        0.01,
-        0.01,
-        "Model note: PSI here tracks only the PM2.5 sub-index (real PSI = max of six pollutants); "
-        "the dashed projection assumes each region's latest 1-hr PM2.5 holds flat, not a forecast.",
-        fontsize=8.5,
-        color="gray",
-    )
-
-    fig.tight_layout(rect=(0, 0.03, 1, 0.87))
     os.makedirs(DOCS_DIR, exist_ok=True)
-    fig.savefig(CHART_PATH, dpi=150)
-    log.info("wrote %s", CHART_PATH)
 
-    write_html(as_of)
+    out = {
+        "colors": REGION_COLORS,
+        "regions": payloads,
+    }
+    with open(DATA_PATH, "w") as f:
+        json.dump(out, f, indent=2)
+    log.info("wrote %s (%d region(s))", DATA_PATH, len(payloads))
+
+    write_html_once()
 
     # GitHub Pages runs a "Deploy from a branch" source through Jekyll by
     # default; .nojekyll tells it to serve docs/ as plain static files
@@ -158,74 +98,170 @@ def main() -> None:
     open(os.path.join(DOCS_DIR, ".nojekyll"), "a").close()
 
 
-def write_html(as_of: dt.datetime) -> None:
-    html = f"""<!doctype html>
+def write_html_once() -> None:
+    """index.html has no per-run dynamic content (the page reads data.json
+    itself at view-time) so this writes identical bytes every run -- cheap
+    to call unconditionally, and git sees no diff when nothing about the
+    page itself changed."""
+    with open(HTML_PATH, "w") as f:
+        f.write(INDEX_HTML)
+    log.info("wrote %s", HTML_PATH)
+
+
+INDEX_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Singapore Haze Dashboard</title>
 <style>
-  :root {{
+  :root {
     color-scheme: light;
     --bg: #f9f9f7;
     --surface: #fcfcfb;
     --ink: #0b0b0b;
     --muted: #52514e;
+    --faint: #898781;
+    --grid: #e1e0d9;
     --border: rgba(11,11,11,0.10);
-  }}
-  @media (prefers-color-scheme: dark) {{
-    :root {{
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
       color-scheme: dark;
       --bg: #0d0d0d;
       --surface: #1a1a19;
       --ink: #ffffff;
       --muted: #c3c2b7;
+      --faint: #898781;
+      --grid: #2c2c2a;
       --border: rgba(255,255,255,0.10);
-    }}
-  }}
-  body {{
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
     margin: 0;
     background: var(--bg);
     color: var(--ink);
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  }}
-  main {{
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 20px 16px 40px;
-  }}
-  h1 {{ font-size: 1.4rem; margin: 0 0 4px; }}
-  .subtitle {{ color: var(--muted); font-size: 0.9rem; margin: 0 0 16px; }}
-  .chart-card {{
+  }
+  main { max-width: 900px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 0.9rem; margin: 0 0 12px; }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .toolbar button {
+    font: inherit;
+    font-size: 0.8rem;
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    font-size: 0.82rem;
+    color: var(--muted);
+    margin: 4px 0 10px;
+  }
+  .legend .key { display: inline-flex; align-items: center; gap: 5px; }
+  .legend .swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  .chart-card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 12px;
-    /* The chart has 5 regions x 2 panels of fine detail (axis ticks, a
-       5-entry legend, per-threshold labels) that turns to mush if the image
-       is shrunk to fit a phone's width. Below the chart's own natural size,
-       scroll/pinch to it at full size instead of force-shrinking everything
-       into illegibility -- a wide chart, not a page, is what should scroll. */
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }}
-  img {{ display: block; border-radius: 6px; width: 820px; max-width: none; }}
-  @media (min-width: 900px) {{
-    img {{ width: 100%; }}
-  }}
-  footer {{ margin-top: 16px; font-size: 0.78rem; color: var(--muted); line-height: 1.5; }}
+    padding: 10px 12px 4px;
+  }
+  .panel-title { font-size: 0.85rem; color: var(--muted); text-align: center; margin: 2px 0 4px; }
+  svg.chart {
+    width: 100%; height: auto; display: block; touch-action: none; cursor: grab;
+    user-select: none; -webkit-user-select: none;
+  }
+  svg.chart.dragging { cursor: grabbing; }
+  .axis-label { font-size: 10px; fill: var(--faint); }
+  .threshold-label { font-size: 10px; fill: var(--muted); }
+  .tooltip {
+    position: fixed;
+    pointer-events: none;
+    background: var(--ink);
+    color: var(--bg);
+    font-size: 0.78rem;
+    padding: 6px 9px;
+    border-radius: 6px;
+    line-height: 1.5;
+    z-index: 20;
+    white-space: nowrap;
+  }
+  .tooltip .row { display: flex; gap: 10px; justify-content: space-between; }
+  .tooltip .row .k { opacity: 0.75; }
+  .tooltip .row .v { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .table-section { margin-top: 10px; }
+  .table-section button {
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .table-wrap { margin-top: 10px; max-height: 340px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+  table.data-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; background: var(--surface); }
+  table.data-table th, table.data-table td {
+    text-align: right; padding: 5px 9px; border-bottom: 1px solid var(--grid);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  table.data-table th:first-child, table.data-table td:first-child,
+  table.data-table th:nth-child(2), table.data-table td:nth-child(2) { text-align: left; }
+  table.data-table thead th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font-variant-numeric: normal; }
+  footer { margin-top: 16px; font-size: 0.78rem; color: var(--muted); line-height: 1.5; }
+  .empty-state { color: var(--muted); font-size: 0.9rem; padding: 24px 0; text-align: center; }
 </style>
 </head>
 <body>
 <main>
   <header>
     <h1>Singapore Haze Dashboard</h1>
-    <p class="subtitle">Latest reading: {as_of.strftime('%a %d %b %Y, %H:%M %Z')}</p>
+    <p class="subtitle" id="subtitle">Loading&hellip;</p>
   </header>
-  <div class="chart-card">
-    <img src="dashboard.png" alt="PM2.5 and PSI time series for Singapore's five regions, with a projected PSI extrapolation toward the 100/150/200 thresholds">
+
+  <div class="toolbar">
+    <span>Drag to pan &middot; scroll or pinch to zoom</span>
+    <button id="reset-view" type="button">Reset view</button>
   </div>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="chart-card">
+    <div class="panel-title">PM2.5 (&micro;g/m&sup3;, 1-hr)</div>
+    <svg class="chart" id="chart-pm25"></svg>
+    <div class="panel-title">PSI (24-hr) &mdash; solid = actual, dashed = projected (flat 1-hr PM2.5 held constant)</div>
+    <svg class="chart" id="chart-psi"></svg>
+  </div>
+
+  <div class="table-section">
+    <button id="toggle-table" type="button">View data table</button>
+    <div class="table-wrap" id="table-wrap" hidden>
+      <table class="data-table" id="data-table">
+        <thead>
+          <tr><th>Time (SGT)</th><th>Region</th><th>PSI</th><th>PM2.5 1h</th><th>PM2.5 24h</th><th>Source</th></tr>
+        </thead>
+        <tbody id="data-table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
   <footer>
     Model note: PSI here tracks only the PM2.5 sub-index (real PSI = max of six pollutant
     sub-indices: PM2.5, PM10, SO2, CO, O3, NO2), so on a day another pollutant dominates the
@@ -234,13 +270,485 @@ def write_html(as_of: dt.datetime) -> None:
     quick "if nothing changes" read, not a forecast. Data: data.gov.sg.
   </footer>
 </main>
+
+<div class="tooltip" id="tooltip" hidden></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var SG_TZ = "Asia/Singapore";
+  var SG_OFFSET_MS = 8 * 3600 * 1000;
+  var THRESHOLDS = [100, 150, 200];
+  var MARGIN = { top: 10, right: 60, bottom: 6, left: 44 };
+  var BOTTOM_AXIS_H = 24;
+  var H_PM25 = 220, H_PSI = 250;
+  var MIN_SPAN_MS = 3 * 3600 * 1000; // can't zoom in tighter than 3h
+
+  var state = {
+    data: null,
+    fullDomain: null,   // [minMs, maxMs] across all real data
+    viewDomain: null,   // currently visible [minMs, maxMs], within fullDomain
+    pm25YDomain: null,
+    psiYDomain: null,
+    panels: [],         // {svg, g, gridGroup, plot, chromeGroup, innerW, innerH, isPsi}
+    width: 860,
+  };
+  var els = {};
+
+  document.addEventListener("DOMContentLoaded", init);
+
+  function init() {
+    els.subtitle = document.getElementById("subtitle");
+    els.legend = document.getElementById("legend");
+    els.tooltip = document.getElementById("tooltip");
+    els.resetBtn = document.getElementById("reset-view");
+    els.toggleTableBtn = document.getElementById("toggle-table");
+    els.tableWrap = document.getElementById("table-wrap");
+    els.tableBody = document.getElementById("data-table-body");
+
+    els.toggleTableBtn.addEventListener("click", function () {
+      var hidden = els.tableWrap.hidden;
+      els.tableWrap.hidden = !hidden;
+      els.toggleTableBtn.textContent = hidden ? "Hide data table" : "View data table";
+    });
+    els.resetBtn.addEventListener("click", function () {
+      state.viewDomain = state.fullDomain.slice();
+      renderAll();
+    });
+    window.addEventListener("resize", debounce(function () {
+      measureWidth();
+      renderAll();
+    }, 150));
+
+    fetch("data.json", { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        state.data = data;
+        var allT = [];
+        Object.keys(data.regions).forEach(function (region) {
+          var p = data.regions[region];
+          p.history.forEach(function (h) { allT.push(Date.parse(h.t)); });
+          p.projection.forEach(function (pt) { allT.push(Date.parse(pt.t)); });
+        });
+        if (!allT.length) throw new Error("no data points in data.json");
+        state.fullDomain = [Math.min.apply(null, allT), Math.max.apply(null, allT)];
+        state.viewDomain = state.fullDomain.slice();
+        computeYDomains();
+
+        var asOfMs = Math.max.apply(null, Object.keys(data.regions).map(function (r) {
+          return Date.parse(data.regions[r].as_of);
+        }));
+        els.subtitle.textContent = "Latest reading: " + fmtSGT(asOfMs, { year: "numeric", month: "short", day: "2-digit" }) + " SGT";
+
+        buildLegend(data.colors);
+        buildTable(data);
+        measureWidth();
+        buildPanel("chart-pm25", false);
+        buildPanel("chart-psi", true);
+        renderAll();
+      })
+      .catch(function (err) {
+        els.subtitle.textContent = "Failed to load data.json";
+        var p = document.createElement("p");
+        p.className = "empty-state";
+        p.textContent = "Could not load dashboard data (" + err.message + "). This page needs to be served over http(s), not opened as a local file.";
+        document.querySelector(".chart-card").replaceWith(p);
+      });
+  }
+
+  function debounce(fn, ms) {
+    var t;
+    return function () {
+      clearTimeout(t);
+      var args = arguments;
+      t = setTimeout(function () { fn.apply(null, args); }, ms);
+    };
+  }
+
+  function measureWidth() {
+    var card = document.querySelector(".chart-card");
+    state.width = Math.max(280, card.clientWidth - 24);
+  }
+
+  function fmtSGT(ms, opts) {
+    return new Intl.DateTimeFormat("en-GB", Object.assign({
+      timeZone: SG_TZ, weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false
+    }, opts || {})).format(new Date(ms));
+  }
+
+  function niceTicks(min, max, count) {
+    if (min === max) { min -= 1; max += 1; }
+    var span = max - min;
+    var step0 = span / count;
+    var mag = Math.pow(10, Math.floor(Math.log10(step0)));
+    var residual = step0 / mag;
+    var step = residual > 5 ? 10 * mag : residual > 2 ? 5 * mag : residual > 1 ? 2 * mag : mag;
+    var niceMin = Math.floor(min / step) * step;
+    var niceMax = Math.ceil(max / step) * step;
+    var ticks = [];
+    for (var v = niceMin; v <= niceMax + 1e-9; v += step) ticks.push(Math.round(v * 1000) / 1000);
+    return ticks;
+  }
+
+  // Time-tick step, chosen so ticks fit the *actual* available width
+  // (narrow mobile screens need fewer ticks or "Sat 12:00"-style labels
+  // collide into illegible mush) -- aligned to nice SGT-hour boundaries
+  // (not UTC/epoch ones -- otherwise ticks land on odd times).
+  var MIN_PX_PER_TICK = 78;
+  var STEP_CANDIDATES_MS = [15, 30, 60, 120, 180, 360, 720, 1440, 2880].map(function (m) { return m * 60 * 1000; });
+  function timeTicks(domain, innerW) {
+    var span = domain[1] - domain[0];
+    var maxTicks = Math.max(2, Math.floor(innerW / MIN_PX_PER_TICK));
+    var step = STEP_CANDIDATES_MS[STEP_CANDIDATES_MS.length - 1];
+    for (var i = 0; i < STEP_CANDIDATES_MS.length; i++) {
+      if (span / STEP_CANDIDATES_MS[i] <= maxTicks) { step = STEP_CANDIDATES_MS[i]; break; }
+    }
+    var startLocal = domain[0] + SG_OFFSET_MS;
+    var first = Math.ceil(startLocal / step) * step - SG_OFFSET_MS;
+    var ticks = [];
+    for (var t = first; t <= domain[1]; t += step) ticks.push(t);
+    return ticks;
+  }
+
+  function scaleLinear(domain, range) {
+    var d0 = domain[0], d1 = domain[1], r0 = range[0], r1 = range[1];
+    var span = d1 - d0 || 1;
+    return function (v) { return r0 + ((v - d0) / span) * (r1 - r0); };
+  }
+
+  function svgEl(tag, attrs) {
+    var el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (var k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  }
+
+  function linePath(points, x, y, xField, yField) {
+    var d = "", pen = false;
+    points.forEach(function (p) {
+      var v = p[yField];
+      if (v === null || v === undefined) { pen = false; return; }
+      var cmd = pen ? "L" : "M";
+      d += cmd + x(p[xField]).toFixed(1) + "," + y(v).toFixed(1) + " ";
+      pen = true;
+    });
+    return d.trim();
+  }
+
+  function buildLegend(colors) {
+    els.legend.innerHTML = "";
+    Object.keys(colors).forEach(function (region) {
+      var span = document.createElement("span");
+      span.className = "key";
+      var sw = document.createElement("span");
+      sw.className = "swatch";
+      sw.style.background = colors[region];
+      var label = document.createElement("span");
+      label.textContent = region.charAt(0).toUpperCase() + region.slice(1);
+      span.appendChild(sw);
+      span.appendChild(label);
+      els.legend.appendChild(span);
+    });
+  }
+
+  function computeYDomains() {
+    var pm25Vals = [0], psiVals = [0].concat(THRESHOLDS);
+    Object.keys(state.data.regions).forEach(function (region) {
+      var p = state.data.regions[region];
+      p.history.forEach(function (h) {
+        if (h.pm25_1h !== null) pm25Vals.push(h.pm25_1h);
+        if (h.psi !== null) psiVals.push(h.psi);
+      });
+      p.projection.forEach(function (pt) { psiVals.push(pt.psi); });
+    });
+    var pm25Ticks = niceTicks(Math.min.apply(null, pm25Vals), Math.max.apply(null, pm25Vals), 4);
+    var psiTicks = niceTicks(Math.min.apply(null, psiVals), Math.max.apply(null, psiVals), 4);
+    state.pm25YDomain = [pm25Ticks[0], pm25Ticks[pm25Ticks.length - 1]];
+    state.psiYDomain = [psiTicks[0], psiTicks[psiTicks.length - 1]];
+  }
+
+  function panelHeight(isPsi) { return isPsi ? H_PSI : H_PM25; }
+  function panelInnerH(isPsi) {
+    return panelHeight(isPsi) - MARGIN.top - MARGIN.bottom - (isPsi ? BOTTOM_AXIS_H : 0);
+  }
+
+  function buildPanel(id, isPsi) {
+    var svg = document.getElementById(id);
+    var g = svgEl("g");
+    svg.appendChild(g);
+
+    var clipId = id + "-clip";
+    var defs = svgEl("defs");
+    var clipRect = svgEl("rect");
+    var clipPath = svgEl("clipPath", { id: clipId });
+    clipPath.appendChild(clipRect);
+    defs.appendChild(clipPath);
+    svg.appendChild(defs);
+
+    // Fixed draw order so a full rebuild each render never needs fragile
+    // child-index bookkeeping: grid (bottom) -> plot (clipped, middle) ->
+    // chrome (ticks/labels/crosshair, top).
+    var gridGroup = svgEl("g");
+    var plot = svgEl("g", { "clip-path": "url(#" + clipId + ")" });
+    var chromeGroup = svgEl("g");
+    g.appendChild(gridGroup);
+    g.appendChild(plot);
+    g.appendChild(chromeGroup);
+
+    var panel = {
+      svg: svg, g: g, gridGroup: gridGroup, plot: plot, chromeGroup: chromeGroup,
+      clipRect: clipRect, isPsi: isPsi, id: id
+    };
+    state.panels.push(panel);
+    attachInteraction(panel);
+    return panel;
+  }
+
+  function renderAll() {
+    if (!state.data) return;
+    state.panels.forEach(renderPanel);
+  }
+
+  function renderPanel(panel) {
+    var W = state.width, H = panelHeight(panel.isPsi);
+    var innerW = W - MARGIN.left - MARGIN.right;
+    var innerH = panelInnerH(panel.isPsi);
+
+    panel.svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    panel.svg.setAttribute("width", W);
+    panel.svg.setAttribute("height", H);
+    panel.g.setAttribute("transform", "translate(" + MARGIN.left + "," + MARGIN.top + ")");
+    panel.clipRect.setAttribute("x", -2);
+    panel.clipRect.setAttribute("y", -2);
+    panel.clipRect.setAttribute("width", innerW + 4);
+    panel.clipRect.setAttribute("height", innerH + 4);
+
+    panel.gridGroup.innerHTML = "";
+    panel.plot.innerHTML = "";
+    panel.chromeGroup.innerHTML = "";
+
+    var x = scaleLinear(state.viewDomain, [0, innerW]);
+    var yDomain = panel.isPsi ? state.psiYDomain : state.pm25YDomain;
+    var y = scaleLinear(yDomain, [innerH, 0]);
+    panel.x = x; panel.y = y; panel.innerW = innerW; panel.innerH = innerH;
+
+    var yTicks = niceTicks(yDomain[0], yDomain[1], 4);
+    yTicks.forEach(function (t) {
+      panel.gridGroup.appendChild(svgEl("line", { x1: 0, x2: innerW, y1: y(t), y2: y(t), stroke: "var(--grid)", "stroke-width": 1 }));
+      var lbl = svgEl("text", { class: "axis-label", x: -6, y: y(t) + 3, "text-anchor": "end" });
+      lbl.textContent = Math.round(t);
+      panel.chromeGroup.appendChild(lbl);
+    });
+
+    var ticks = timeTicks(state.viewDomain, innerW);
+    ticks.forEach(function (t) {
+      var xp = x(t);
+      panel.gridGroup.appendChild(svgEl("line", { x1: xp, x2: xp, y1: 0, y2: innerH, stroke: "var(--grid)", "stroke-width": 1 }));
+      if (panel.isPsi) {
+        panel.chromeGroup.appendChild(svgEl("line", { x1: xp, x2: xp, y1: innerH, y2: innerH + 4, stroke: "var(--faint)", "stroke-width": 1 }));
+        var lbl = svgEl("text", { class: "axis-label", x: xp, y: innerH + 15, "text-anchor": "middle" });
+        lbl.textContent = fmtSGT(t);
+        panel.chromeGroup.appendChild(lbl);
+      }
+    });
+
+    var colors = state.data.colors;
+    var regions = Object.keys(state.data.regions);
+
+    if (panel.isPsi) {
+      THRESHOLDS.forEach(function (th) {
+        if (th < yDomain[0] || th > yDomain[1]) return;
+        panel.plot.appendChild(svgEl("line", { x1: 0, x2: innerW, y1: y(th), y2: y(th), stroke: "var(--faint)", "stroke-width": 1 }));
+        var lbl = svgEl("text", { class: "threshold-label", x: innerW - 2, y: y(th) - 3, "text-anchor": "end" });
+        lbl.textContent = "PSI " + th;
+        panel.chromeGroup.appendChild(lbl);
+      });
+    }
+
+    regions.forEach(function (region) {
+      var payload = state.data.regions[region];
+      var color = colors[region];
+      var hist = payload.history.map(function (h) { return { t: Date.parse(h.t), psi: h.psi, pm25_1h: h.pm25_1h }; });
+      var field = panel.isPsi ? "psi" : "pm25_1h";
+      var path = svgEl("path", {
+        d: linePath(hist, x, y, "t", field), fill: "none", stroke: color,
+        "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round"
+      });
+      panel.plot.appendChild(path);
+
+      if (panel.isPsi && payload.projection.length) {
+        var proj = payload.projection.map(function (p) { return { t: Date.parse(p.t), psi: p.psi }; });
+        var projPath = svgEl("path", {
+          d: linePath(proj, x, y, "t", "psi"), fill: "none", stroke: color,
+          "stroke-width": 2, "stroke-dasharray": "6 4", opacity: "0.6", "stroke-linecap": "round"
+        });
+        panel.plot.appendChild(projPath);
+      }
+    });
+
+    var crosshair = svgEl("line", { x1: -10, x2: -10, y1: 0, y2: innerH, stroke: "var(--faint)", "stroke-width": 1, visibility: "hidden" });
+    panel.chromeGroup.appendChild(crosshair);
+    panel.crosshair = crosshair;
+  }
+
+  function clampViewDomain(domain) {
+    var full = state.fullDomain;
+    var span = Math.min(domain[1] - domain[0], full[1] - full[0]);
+    span = Math.max(span, MIN_SPAN_MS);
+    var lo = domain[0], hi = lo + span;
+    if (lo < full[0]) { lo = full[0]; hi = lo + span; }
+    if (hi > full[1]) { hi = full[1]; lo = hi - span; }
+    return [lo, hi];
+  }
+
+  function attachInteraction(panel) {
+    var svg = panel.svg;
+    var dragState = null;
+
+    svg.addEventListener("pointerdown", function (evt) {
+      evt.preventDefault(); // otherwise a drag starting over an axis-label <text> triggers native text selection
+      svg.setPointerCapture(evt.pointerId);
+      svg.classList.add("dragging");
+      dragState = { startX: evt.clientX, startDomain: state.viewDomain.slice() };
+    });
+
+    svg.addEventListener("pointermove", function (evt) {
+      if (dragState) {
+        var scale = state.width / svg.getBoundingClientRect().width;
+        var pxPerMs = panel.innerW / (dragState.startDomain[1] - dragState.startDomain[0]);
+        var dxPx = (evt.clientX - dragState.startX) * scale;
+        var dtMs = dxPx / pxPerMs;
+        state.viewDomain = clampViewDomain([dragState.startDomain[0] - dtMs, dragState.startDomain[1] - dtMs]);
+        renderAll();
+        return;
+      }
+      handleHover(panel, evt);
+    });
+
+    function endDrag(evt) {
+      if (dragState) {
+        try { svg.releasePointerCapture(evt.pointerId); } catch (e) { /* already released */ }
+        dragState = null;
+        svg.classList.remove("dragging");
+      }
+    }
+    svg.addEventListener("pointerup", endDrag);
+    svg.addEventListener("pointercancel", endDrag);
+    svg.addEventListener("pointerleave", function (evt) {
+      endDrag(evt);
+      state.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
+      els.tooltip.hidden = true;
+    });
+
+    svg.addEventListener("wheel", function (evt) {
+      evt.preventDefault();
+      var rect = svg.getBoundingClientRect();
+      var scale = state.width / rect.width;
+      var localX = (evt.clientX - rect.left) * scale - MARGIN.left;
+      var frac = Math.max(0, Math.min(1, localX / panel.innerW));
+      var cursorT = state.viewDomain[0] + frac * (state.viewDomain[1] - state.viewDomain[0]);
+      var factor = evt.deltaY > 0 ? 1.15 : 1 / 1.15;
+      var span = (state.viewDomain[1] - state.viewDomain[0]) * factor;
+      var lo = cursorT - frac * span, hi = lo + span;
+      state.viewDomain = clampViewDomain([lo, hi]);
+      renderAll();
+    }, { passive: false });
+  }
+
+  function handleHover(panel, evt) {
+    var rect = panel.svg.getBoundingClientRect();
+    var scale = state.width / rect.width;
+    var localX = (evt.clientX - rect.left) * scale - MARGIN.left;
+    var clampedX = Math.max(0, Math.min(panel.innerW, localX));
+    var tMs = state.viewDomain[0] + (clampedX / panel.innerW) * (state.viewDomain[1] - state.viewDomain[0]);
+
+    state.panels.forEach(function (p) {
+      var cx = p.x ? p.x(tMs) : -10;
+      if (p.crosshair) {
+        p.crosshair.setAttribute("x1", cx);
+        p.crosshair.setAttribute("x2", cx);
+        p.crosshair.setAttribute("visibility", "visible");
+      }
+    });
+
+    var rows = [];
+    var regions = Object.keys(state.data.regions);
+    regions.forEach(function (region) {
+      var hist = state.data.regions[region].history;
+      var nearest = null, bestDiff = Infinity;
+      for (var i = 0; i < hist.length; i++) {
+        var diff = Math.abs(Date.parse(hist[i].t) - tMs);
+        if (diff < bestDiff) { bestDiff = diff; nearest = hist[i]; }
+      }
+      if (nearest) rows.push({ region: region, row: nearest });
+    });
+    if (!rows.length) return;
+    showTooltip(evt, rows);
+  }
+
+  function showTooltip(evt, rows) {
+    els.tooltip.innerHTML = "";
+    var timeRow = document.createElement("div");
+    timeRow.className = "row";
+    var k0 = document.createElement("span"); k0.className = "k"; k0.textContent = "Time";
+    var v0 = document.createElement("span"); v0.className = "v"; v0.textContent = fmtSGT(Date.parse(rows[0].row.t));
+    timeRow.appendChild(k0); timeRow.appendChild(v0);
+    els.tooltip.appendChild(timeRow);
+
+    rows.forEach(function (r) {
+      var row = document.createElement("div");
+      row.className = "row";
+      var k = document.createElement("span");
+      k.className = "k";
+      k.style.color = state.data.colors[r.region];
+      k.textContent = r.region.charAt(0).toUpperCase() + r.region.slice(1);
+      var v = document.createElement("span");
+      v.className = "v";
+      var psi = r.row.psi === null ? "–" : Math.round(r.row.psi);
+      var pm = r.row.pm25_1h === null ? "–" : r.row.pm25_1h.toFixed(1);
+      v.textContent = "PSI " + psi + " / PM " + pm;
+      row.appendChild(k); row.appendChild(v);
+      els.tooltip.appendChild(row);
+    });
+
+    els.tooltip.hidden = false;
+    var left = evt.clientX + 14;
+    if (left + 220 > window.innerWidth) left = evt.clientX - 220 - 14;
+    els.tooltip.style.left = left + "px";
+    els.tooltip.style.top = (evt.clientY + 14) + "px";
+  }
+
+  function buildTable(data) {
+    var rows = [];
+    Object.keys(data.regions).forEach(function (region) {
+      data.regions[region].history.forEach(function (h) {
+        rows.push({ t: Date.parse(h.t), region: region, row: h });
+      });
+    });
+    rows.sort(function (a, b) { return b.t - a.t; });
+    els.tableBody.innerHTML = "";
+    rows.forEach(function (r) {
+      var tr = document.createElement("tr");
+      appendCell(tr, fmtSGT(r.t, { year: "numeric", month: "short", day: "2-digit" }));
+      appendCell(tr, r.region.charAt(0).toUpperCase() + r.region.slice(1));
+      appendCell(tr, r.row.psi === null ? "–" : Math.round(r.row.psi));
+      appendCell(tr, r.row.pm25_1h === null ? "–" : r.row.pm25_1h.toFixed(1));
+      appendCell(tr, r.row.pm25_24h === null ? "–" : r.row.pm25_24h.toFixed(1));
+      appendCell(tr, r.row.pm25_24h_source || "–");
+      els.tableBody.appendChild(tr);
+    });
+  }
+
+  function appendCell(tr, text) {
+    var td = document.createElement("td");
+    td.textContent = text;
+    tr.appendChild(td);
+  }
+})();
+</script>
 </body>
 </html>
 """
-    with open(HTML_PATH, "w") as f:
-        f.write(html)
-    log.info("wrote %s", HTML_PATH)
-
-
-if __name__ == "__main__":
-    main()

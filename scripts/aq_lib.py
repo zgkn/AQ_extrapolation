@@ -10,12 +10,6 @@ from __future__ import annotations
 
 import datetime as dt
 
-# Singapore has no DST and data.gov.sg timestamps already carry this offset,
-# but anything that formats a datetime for *display* (matplotlib's
-# DateFormatter in particular -- it silently renders in UTC unless told
-# otherwise, even when given tz-aware datetimes) needs to be told explicitly.
-SGT = dt.timezone(dt.timedelta(hours=8))
-
 # The live API only ever returns these five (confirmed against production --
 # there is no "national" key in either endpoint's readings, despite that
 # being assumed at spec time). "national" is a nationwide aggregate we

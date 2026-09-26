@@ -32,7 +32,7 @@ jobs:
       - name: Fetch latest PM2.5 + PSI data
         run: python scripts/fetch_data.py
 
-      - name: Build dashboard (chart + docs/index.html)
+      - name: Build dashboard (docs/data.json + docs/index.html)
         id: build_dashboard
         continue-on-error: true
         run: python scripts/build_dashboard.py
@@ -47,8 +47,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git rm --ignore-unmatch --quiet dashboard.png
-          for f in data/history.csv docs/index.html docs/dashboard.png docs/.nojekyll; do
+          git rm --ignore-unmatch --quiet dashboard.png docs/dashboard.png
+          for f in data/history.csv docs/index.html docs/data.json docs/.nojekyll; do
             [ -e "$f" ] && git add "$f"
           done
           if git diff --cached --quiet; then

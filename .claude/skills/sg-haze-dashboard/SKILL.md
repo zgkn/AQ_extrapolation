@@ -1,6 +1,6 @@
 ---
 name: sg-haze-dashboard
-description: Rebuild, extend, or debug the Singapore PM2.5/PSI haze-tracking GitHub Actions pipeline in this repo (scripts/fetch_data.py, scripts/build_dashboard.py, .github/workflows/haze-dashboard.yml, data/history.csv, docs/index.html, docs/dashboard.png). Use when asked about this project's haze dashboard, the GitHub Pages site, PSI projections, data.gov.sg air quality data, or when setting up a similar incremental-fetch-and-commit pipeline elsewhere.
+description: Rebuild, extend, or debug the Singapore PM2.5/PSI haze-tracking GitHub Actions pipeline in this repo (scripts/fetch_data.py, scripts/build_dashboard.py, .github/workflows/haze-dashboard.yml, data/history.csv, docs/index.html, docs/data.json). Use when asked about this project's haze dashboard, the GitHub Pages site, PSI projections, data.gov.sg air quality data, or when setting up a similar incremental-fetch-and-commit pipeline elsewhere.
 ---
 
 # Singapore Haze Dashboard pipeline
@@ -10,8 +10,9 @@ description: Rebuild, extend, or debug the Singapore PM2.5/PSI haze-tracking Git
 An hourly GitHub Actions pipeline that tracks Singapore PM2.5 + PSI from
 data.gov.sg and projects when PSI will cross 100/150/200, using
 git-commit-as-persistence (no external DB/cache/artifacts). Publishes a
-GitHub Pages site showing a time-series chart -- PM2.5 and PSI for each of
-the five real regions, with a dashed PSI projection toward the thresholds.
+GitHub Pages site with an interactive (drag-to-pan, scroll/pinch-to-zoom)
+time-series chart -- PM2.5 and PSI for each of the five real regions, with
+a dashed PSI projection toward the thresholds.
 
 ## Files
 
@@ -26,22 +27,31 @@ the five real regions, with a dashed PSI projection toward the thresholds.
   Dedupes on `(timestamp, region)`, retains `aq_lib.RETENTION_HOURS` (72h)
   of history -- the dashboard only shows `aq_lib.HISTORY_WINDOW_HOURS` (48h)
   of it; the extra buffer protects against a missed run needing backfill.
-- `scripts/build_dashboard.py` -- renders both `docs/dashboard.png` and the
-  `docs/index.html` that embeds it (single script, since they're a tightly
-  coupled one-shot render). Two stacked single-axis panels -- PM2.5, then
-  PSI -- deliberately *not* one dual-axis plot, which invents a correlation
-  between two differently-scaled series. Each of the five real regions
-  (`aq_lib.API_REGIONS`) gets a fixed categorical color (`REGION_COLORS`,
-  never reused/cycled) shared between both panels. The PSI panel adds a
-  dashed flat-PM2.5 projection per region and solid threshold lines at
-  100/150/200; where a dashed line crosses a threshold line **is** that
-  region's ETA -- deliberately no per-region ETA text, since 5 regions x 3
-  thresholds of text would clutter the chart (the underlying numbers are
-  still in `compute_payload`'s `thresholds` field if a text/table view is
-  ever wanted). Also writes `docs/.nojekyll` (see below).
+- `scripts/build_dashboard.py` -- writes `docs/data.json` (the numbers,
+  via `compute_payload` per region) and `docs/index.html` (a static page,
+  identical bytes every run -- it reads `data.json` client-side, so only
+  the data file actually changes each commit). No matplotlib/PNG anymore;
+  the chart is a hand-rolled SVG rendered and made interactive entirely in
+  `index.html`'s inline `<script>` -- Python only computes, the browser
+  only renders + pans/zooms already-computed numbers. Two stacked
+  single-axis panels -- PM2.5, then PSI -- deliberately *not* one dual-axis
+  plot, which invents a correlation between two differently-scaled series.
+  Each of the five real regions (`aq_lib.API_REGIONS`) gets a fixed
+  categorical color (`REGION_COLORS` in `build_dashboard.py` -- the only
+  copy; it's written into `data.json`'s `colors` key and the JS always
+  reads it from there, never hardcodes it) shared between both panels. The PSI
+  panel adds a dashed flat-PM2.5 projection per region and threshold lines
+  at 100/150/200; a dashed line crossing a threshold line **is** that
+  region's ETA -- no per-region ETA text (5 regions x 3 thresholds would
+  clutter the chart), but hovering shows exact values via the crosshair
+  tooltip, and the full numbers are in `data.json`/the table-view toggle.
+  Interaction: drag pans, wheel/pinch zooms (centered on the cursor,
+  clamped to the actual data range and a 3h minimum span), both panels
+  share one time domain so they pan/zoom in lockstep, "Reset view" restores
+  the full range. Also writes `docs/.nojekyll` (see below).
 - `.github/workflows/haze-dashboard.yml` -- hourly cron + `workflow_dispatch`,
   runs fetch -> build_dashboard -> `git pull --rebase` -> commit + push
-  `data/history.csv`, `docs/dashboard.png`, `docs/index.html`, `docs/.nojekyll`.
+  `data/history.csv`, `docs/data.json`, `docs/index.html`, `docs/.nojekyll`.
 
 ## GitHub Pages
 
@@ -122,12 +132,22 @@ Given current 24-hr baseline `B` and latest 1-hr reading `X` held flat:
 - **Change region colors**: edit `REGION_COLORS` in `build_dashboard.py`.
   Keep a fixed order and don't cycle/reuse hues across regions --
   see the dataviz skill if adding a 6th+ series.
-- **Any datetime formatting/display added later**: use `aq_lib.SGT`
-  explicitly. `data/history.csv` timestamps already carry `+08:00`, but
-  matplotlib's `DateFormatter` silently renders in UTC unless given
-  `tz=SGT` -- this caused a real bug (chart x-axis ticks were quietly 8h
-  behind the title's SGT "as of" time) until `build_dashboard.py`'s
-  `xaxis.set_major_formatter(...)` call was fixed to pass it.
+- **Tune pan/zoom feel**: in `index.html`'s script, `MIN_SPAN_MS` (3h) is
+  the closest zoom-in, `STEP_CANDIDATES_MS` + `MIN_PX_PER_TICK` (78px)
+  control x-axis tick density (recomputed from the *actual measured*
+  container width on every render/resize -- don't hardcode a tick count,
+  it was the cause of an actual bug: labels overlapping into mush on a
+  narrow phone screen until tick count was made width-aware), and the
+  wheel handler's `1.15` factor is the zoom speed per scroll tick.
+- **Any datetime formatting/display added later (in the JS)**: use
+  `Intl.DateTimeFormat` with `timeZone: "Asia/Singapore"` (see `fmtSGT()`
+  in `index.html`), never a bare `Date` method -- `toLocaleString()`/etc
+  without an explicit timeZone use the *viewer's* browser timezone, not
+  Singapore's. This bit us once already in the matplotlib-PNG version
+  (its `DateFormatter` silently rendered ticks in UTC, 8h behind the
+  title); the JS rewrite's tick-alignment math (`timeTicks()`) also needs
+  the explicit `SG_OFFSET_MS` shift, or ticks land on odd times relative
+  to SGT hour boundaries.
 - **Debug a bad run**: check the Action's logs for `run type: latest only`
   vs `latest + backfill(...)`, and the `retention: trimmed N row(s)` line.
 - **If pushes start conflicting**: the workflow already does
