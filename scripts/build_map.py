@@ -208,8 +208,16 @@ def main() -> None:
     m.get_root().html.add_child(folium.Element(build_legend()))
     m.get_root().html.add_child(folium.Element(build_footer()))
 
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    docs_dir = os.path.dirname(OUTPUT_PATH)
+    os.makedirs(docs_dir, exist_ok=True)
     m.save(OUTPUT_PATH)
+
+    # Tell GitHub Pages to skip its default Jekyll build and serve docs/ as
+    # plain static files -- without this, Pages runs the folder through
+    # Jekyll's default theme processing, which errors out on a non-Jekyll
+    # site (it expects e.g. a _config.yml / assets layout that isn't there).
+    open(os.path.join(docs_dir, ".nojekyll"), "a").close()
+
     log.info("wrote %s (%d region marker(s))", OUTPUT_PATH, plotted)
 
 
