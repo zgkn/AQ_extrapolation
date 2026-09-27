@@ -237,7 +237,7 @@ INDEX_HTML = r"""<!doctype html>
   </header>
 
   <div class="toolbar">
-    <span>Drag to pan &middot; scroll or pinch to zoom</span>
+    <span>Drag to pan &middot; scroll or pinch to zoom &middot; tap a point for readings</span>
     <button id="reset-view" type="button">Reset view</button>
   </div>
 
@@ -284,6 +284,7 @@ INDEX_HTML = r"""<!doctype html>
   var BOTTOM_AXIS_H = 24;
   var H_PM25 = 220, H_PSI = 250;
   var MIN_SPAN_MS = 3 * 3600 * 1000; // can't zoom in tighter than 3h
+  var TAP_MAX_MOVE_PX = 8; // pointerdown->up movement under this counts as a tap, not a drag
 
   var state = {
     data: null,
@@ -293,6 +294,7 @@ INDEX_HTML = r"""<!doctype html>
     psiYDomain: null,
     panels: [],         // {svg, g, gridGroup, plot, chromeGroup, innerW, innerH, isPsi}
     width: 860,
+    pinned: false,      // true once a tap/click has pinned the readings tooltip in place
   };
   var els = {};
 
@@ -314,12 +316,24 @@ INDEX_HTML = r"""<!doctype html>
     });
     els.resetBtn.addEventListener("click", function () {
       state.viewDomain = state.fullDomain.slice();
+      state.pinned = false;
+      els.tooltip.hidden = true;
       renderAll();
     });
     window.addEventListener("resize", debounce(function () {
       measureWidth();
       renderAll();
     }, 150));
+    // Tapping/clicking outside the chart dismisses a pinned tooltip. Inside
+    // the chart-card, each panel's own pointerdown/up handlers below decide
+    // whether it was a tap (pins a new point) or a drag (leaves it alone).
+    document.addEventListener("pointerdown", function (evt) {
+      if (!state.pinned) return;
+      if (evt.target.closest && evt.target.closest(".chart-card")) return;
+      state.pinned = false;
+      els.tooltip.hidden = true;
+      state.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
+    });
 
     fetch("data.json", { cache: "no-store" })
       .then(function (r) {
@@ -682,10 +696,12 @@ INDEX_HTML = r"""<!doctype html>
         dragState = null;
         pinchState = { ids: ids, lastDist: distanceBetween(ids[0], ids[1]) };
         svg.classList.remove("dragging");
+        panel.tapStart = null;
       } else if (ids.length === 1) {
         pinchState = null;
         svg.classList.add("dragging");
         dragState = { startX: evt.clientX, startDomain: state.viewDomain.slice() };
+        panel.tapStart = { x: evt.clientX, y: evt.clientY };
       }
       // 3rd+ simultaneous pointer (e.g. a resting palm): ignored, current gesture continues.
     });
@@ -693,6 +709,10 @@ INDEX_HTML = r"""<!doctype html>
     svg.addEventListener("pointermove", function (evt) {
       if (!(evt.pointerId in pointers)) { handleHover(panel, evt); return; }
       pointers[evt.pointerId] = { x: evt.clientX, y: evt.clientY };
+
+      if (panel.tapStart && Math.hypot(evt.clientX - panel.tapStart.x, evt.clientY - panel.tapStart.y) > TAP_MAX_MOVE_PX) {
+        panel.tapStart = null; // moved too far to still count as a tap -- it's a drag
+      }
 
       if (pinchState) {
         evt.preventDefault();
@@ -724,6 +744,10 @@ INDEX_HTML = r"""<!doctype html>
       try { svg.releasePointerCapture(evt.pointerId); } catch (e) { /* already released */ }
       delete pointers[evt.pointerId];
       var ids = activeIds();
+      // Only a real pointerup (not a cancel -- e.g. the browser took over for
+      // a page scroll) with no leftover pointers and no pinch in play counts
+      // as a tap: pin the readings tooltip at that point.
+      var wasTap = evt.type === "pointerup" && !pinchState && panel.tapStart && ids.length === 0;
 
       if (pinchState) {
         if (ids.length < 2) {
@@ -739,6 +763,11 @@ INDEX_HTML = r"""<!doctype html>
         dragState = null;
         svg.classList.remove("dragging");
       }
+
+      if (wasTap) {
+        panel.tapStart = null;
+        selectPoint(panel, evt);
+      }
     }
     svg.addEventListener("pointerup", endPointer);
     svg.addEventListener("pointercancel", endPointer);
@@ -746,6 +775,8 @@ INDEX_HTML = r"""<!doctype html>
       // Pointer capture (set on pointerdown above) suppresses pointerleave
       // for an actively-dragging/pinching pointer, so reaching here means
       // this was just a hover, not a live gesture -- safe to hide the crosshair.
+      // A pinned (tapped/clicked) tooltip stays until the next tap/click.
+      if (state.pinned) return;
       state.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
       els.tooltip.hidden = true;
     });
@@ -758,10 +789,27 @@ INDEX_HTML = r"""<!doctype html>
   }
 
   function handleHover(panel, evt) {
-    var localX = localXFromClientX(panel.svg, evt.clientX);
-    var clampedX = Math.max(0, Math.min(panel.innerW, localX));
-    var tMs = state.viewDomain[0] + (clampedX / panel.innerW) * (state.viewDomain[1] - state.viewDomain[0]);
+    if (state.pinned) return; // a tapped/clicked point holds the tooltip until dismissed
+    showReadingsAt(tMsFromClientX(panel, evt.clientX), evt);
+  }
 
+  // A tap/click (as opposed to a drag/pinch, see attachInteraction) pins the
+  // readings tooltip at that point instead of it just following the pointer
+  // -- this is the only way to see readings on touch (no hover there), and
+  // on desktop it freezes the tooltip in place instead of it disappearing
+  // once the mouse moves off the chart.
+  function selectPoint(panel, evt) {
+    state.pinned = true;
+    showReadingsAt(tMsFromClientX(panel, evt.clientX), evt);
+  }
+
+  function tMsFromClientX(panel, clientX) {
+    var localX = localXFromClientX(panel.svg, clientX);
+    var clampedX = Math.max(0, Math.min(panel.innerW, localX));
+    return state.viewDomain[0] + (clampedX / panel.innerW) * (state.viewDomain[1] - state.viewDomain[0]);
+  }
+
+  function showReadingsAt(tMs, evt) {
     state.panels.forEach(function (p) {
       var cx = p.x ? p.x(tMs) : -10;
       if (p.crosshair) {

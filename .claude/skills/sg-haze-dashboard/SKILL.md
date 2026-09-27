@@ -53,7 +53,9 @@ a dashed PSI projection toward the thresholds.
   Interaction: drag pans, wheel/pinch zooms (centered on the cursor,
   clamped to the actual data range and a 3h minimum span), both panels
   share one time domain so they pan/zoom in lockstep, "Reset view" restores
-  the full range. Also writes `docs/.nojekyll` (see below).
+  the full range. A tap/click on a point (as opposed to a drag/pinch) pins
+  the readings tooltip there -- see "Tap/click to pin readings" below. Also
+  writes `docs/.nojekyll` (see below).
 - `.github/workflows/haze-dashboard.yml` -- hourly cron + `workflow_dispatch`,
   runs fetch -> build_dashboard -> `git pull --rebase` -> commit + push
   `data/history.csv`, `docs/data.json`, `docs/index.html`, `docs/.nojekyll`.
@@ -155,6 +157,19 @@ Given current 24-hr baseline `B` and latest 1-hr reading `X` held flat:
   viewer zooms in far enough for them to be legible, which is intentional,
   not a bug -- if markers seem to be "missing," check whether the current
   view has too many visible points first.
+- **Tap/click to pin readings**: plain hover already showed a tooltip on
+  mouse, but that's useless on touch (no hover) and disappears the instant
+  the pointer leaves. `attachInteraction()` now distinguishes a tap/click
+  (pointerdown -> pointerup with < `TAP_MAX_MOVE_PX` movement, tracked via
+  `panel.tapStart`) from a drag/pinch, and a tap calls `selectPoint()`,
+  which sets `state.pinned = true` and freezes the tooltip/crosshair at that
+  point -- `handleHover()` and the `pointerleave` handler both check
+  `state.pinned` first and no-op while it's set, so plain mouse movement
+  afterward doesn't overwrite it. Dismissed by: tapping/clicking elsewhere
+  on the *same* chart (moves the pin), a document-level `pointerdown`
+  listener outside `.chart-card` (clears it), or "Reset view". A
+  `pointercancel` (browser took the gesture over, e.g. a page scroll) is
+  deliberately *not* treated as a tap -- only a genuine `pointerup` is.
 - **Touch/mobile pan+pinch**: `attachInteraction()` in `index.html` tracks
   every active pointer per panel (`pointers` map keyed by `pointerId`) --
   1 pointer = pan (drag), 2 = pinch-zoom anchored at their midpoint,
