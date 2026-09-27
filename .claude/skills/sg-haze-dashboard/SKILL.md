@@ -24,9 +24,14 @@ a dashed PSI projection toward the thresholds.
   "latest only" call (no `date` param) to both endpoints, and additionally
   backfills via `?date=YYYY-MM-DD` per missing day if the last row in
   `data/history.csv` is more than ~2h stale (missed run or first run).
-  Dedupes on `(timestamp, region)`, retains `aq_lib.RETENTION_HOURS` (72h)
-  of history -- the dashboard only shows `aq_lib.HISTORY_WINDOW_HOURS` (48h)
-  of it; the extra buffer protects against a missed run needing backfill.
+  Dedupes on `(timestamp, region)`, retains `aq_lib.RETENTION_HOURS` (8
+  days) of history -- the dashboard only shows `aq_lib.HISTORY_WINDOW_HOURS`
+  (7 days) of it; the extra buffer protects against a missed run needing
+  backfill. 7 days (not 24-48h) is deliberate now that the chart pans/zooms:
+  a longer default window gives useful multi-day trend context (real haze
+  episodes often build over several days) without hurting legibility, since
+  users can zoom into any sub-range rather than being stuck with everything
+  visible and cramped by default.
 - `scripts/build_dashboard.py` -- writes `docs/data.json` (the numbers,
   via `compute_payload` per region) and `docs/index.html` (a static page,
   identical bytes every run -- it reads `data.json` client-side, so only
@@ -126,8 +131,8 @@ Given current 24-hr baseline `B` and latest 1-hr reading `X` held flat:
   chart's threshold lines and `compute_payload`'s ETA math import it from
   there, so there's one place to change.
 - **Change how much history the chart shows**: edit
-  `HISTORY_WINDOW_HOURS` in `aq_lib.py` (currently 48h). If you push it
-  past `RETENTION_HOURS` (72h), raise that too, or the chart will just
+  `HISTORY_WINDOW_HOURS` in `aq_lib.py` (currently 7 days). If you push it
+  past `RETENTION_HOURS` (8 days), raise that too, or the chart will just
   show whatever's left after trimming.
 - **Change region colors**: edit `REGION_COLORS` in `build_dashboard.py`.
   Keep a fixed order and don't cycle/reuse hues across regions --

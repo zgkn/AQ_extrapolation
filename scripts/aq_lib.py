@@ -22,8 +22,8 @@ PM25_URL = f"{API_BASE}/pm25"
 PSI_URL = f"{API_BASE}/psi"
 
 HISTORY_PATH = "data/history.csv"
-HISTORY_WINDOW_HOURS = 48  # how much history the chart displays
-RETENTION_HOURS = 72  # HISTORY_WINDOW_HOURS + a buffer so a missed run can still backfill
+HISTORY_WINDOW_HOURS = 24 * 7  # how much history the chart displays (7 days)
+RETENTION_HOURS = 24 * 8  # HISTORY_WINDOW_HOURS + a buffer so a missed run can still backfill
 GAP_THRESHOLD_HOURS = 2  # if last row is older than this vs. now, treat as a missed run
 
 CSV_FIELDS = [
