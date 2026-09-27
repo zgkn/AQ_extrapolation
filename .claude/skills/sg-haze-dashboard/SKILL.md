@@ -138,12 +138,23 @@ Given current 24-hr baseline `B` and latest 1-hr reading `X` held flat:
   Keep a fixed order and don't cycle/reuse hues across regions --
   see the dataviz skill if adding a 6th+ series.
 - **Tune pan/zoom feel**: in `index.html`'s script, `MIN_SPAN_MS` (3h) is
-  the closest zoom-in, `STEP_CANDIDATES_MS` + `MIN_PX_PER_TICK` (78px)
+  the closest zoom-in, `STEP_CANDIDATES_MS` + `MIN_PX_PER_TICK` (65px)
   control x-axis tick density (recomputed from the *actual measured*
   container width on every render/resize -- don't hardcode a tick count,
   it was the cause of an actual bug: labels overlapping into mush on a
-  narrow phone screen until tick count was made width-aware), and the
-  wheel handler's `1.15` factor is the zoom speed per scroll tick.
+  narrow phone screen until tick count was made width-aware; if you lower
+  `MIN_PX_PER_TICK` further to pack in even more ticks, re-check mobile
+  widths for overlap, don't just eyeball desktop), and the wheel handler's
+  `1.15` factor is the zoom speed per scroll tick.
+- **Scatter markers**: `drawMarkers()` draws a small dot at each real data
+  point on top of the line, but only when `countInView()` (points inside
+  the *current* pan/zoom window, not the whole dataset) is under
+  `MAX_MARKER_POINTS` (60) -- 5 regions x a week of hourly data is ~170
+  points/line fully zoomed out, and drawing dots for all of that would be
+  a smear, not a scatter plot. This means markers only appear once the
+  viewer zooms in far enough for them to be legible, which is intentional,
+  not a bug -- if markers seem to be "missing," check whether the current
+  view has too many visible points first.
 - **Touch/mobile pan+pinch**: `attachInteraction()` in `index.html` tracks
   every active pointer per panel (`pointers` map keyed by `pointerId`) --
   1 pointer = pan (drag), 2 = pinch-zoom anchored at their midpoint,

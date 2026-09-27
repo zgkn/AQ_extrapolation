@@ -398,7 +398,7 @@ INDEX_HTML = r"""<!doctype html>
   // (narrow mobile screens need fewer ticks or "Sat 12:00"-style labels
   // collide into illegible mush) -- aligned to nice SGT-hour boundaries
   // (not UTC/epoch ones -- otherwise ticks land on odd times).
-  var MIN_PX_PER_TICK = 78;
+  var MIN_PX_PER_TICK = 65;
   var STEP_CANDIDATES_MS = [15, 30, 60, 120, 180, 360, 720, 1440, 2880].map(function (m) { return m * 60 * 1000; });
   function timeTicks(domain, innerW) {
     var span = domain[1] - domain[0];
@@ -436,6 +436,27 @@ INDEX_HTML = r"""<!doctype html>
       pen = true;
     });
     return d.trim();
+  }
+
+  var MAX_MARKER_POINTS = 60; // per region/line, within the current view -- above this, dots would just be a smear
+
+  function countInView(points, xField) {
+    var lo = state.viewDomain[0], hi = state.viewDomain[1], n = 0;
+    for (var i = 0; i < points.length; i++) {
+      var t = points[i][xField];
+      if (t >= lo && t <= hi) n++;
+    }
+    return n;
+  }
+
+  function drawMarkers(container, points, x, y, xField, yField, color, opacity) {
+    points.forEach(function (p) {
+      var v = p[yField];
+      if (v === null || v === undefined) return;
+      container.appendChild(svgEl("circle", {
+        cx: x(p[xField]).toFixed(1), cy: y(v).toFixed(1), r: 2.5, fill: color, opacity: opacity
+      }));
+    });
   }
 
   function buildLegend(colors) {
@@ -579,6 +600,17 @@ INDEX_HTML = r"""<!doctype html>
       });
       panel.plot.appendChild(path);
 
+      // Scatter markers on top of the line -- but only once a point's
+      // neighbors are far enough apart to read as points rather than a
+      // solid smear. 5 regions x a week of hourly data is ~170 points/line
+      // fully zoomed out; drawing markers for all of that would just be
+      // clutter, so gate on the *visible* (in the current pan/zoom) point
+      // count, not the dataset size, so markers appear naturally once
+      // you've zoomed in far enough for them to be legible.
+      if (countInView(hist, "t") <= MAX_MARKER_POINTS) {
+        drawMarkers(panel.plot, hist, x, y, "t", field, color, 1);
+      }
+
       if (panel.isPsi && payload.projection.length) {
         var proj = payload.projection.map(function (p) { return { t: Date.parse(p.t), psi: p.psi }; });
         var projPath = svgEl("path", {
@@ -586,6 +618,9 @@ INDEX_HTML = r"""<!doctype html>
           "stroke-width": 2, "stroke-dasharray": "6 4", opacity: "0.6", "stroke-linecap": "round"
         });
         panel.plot.appendChild(projPath);
+        if (countInView(proj, "t") <= MAX_MARKER_POINTS) {
+          drawMarkers(panel.plot, proj, x, y, "t", "psi", color, 0.6);
+        }
       }
     });
 
