@@ -822,13 +822,20 @@ INDEX_HTML = r"""<!doctype html>
     var rows = [];
     var regions = Object.keys(state.data.regions);
     regions.forEach(function (region) {
-      var hist = state.data.regions[region].history;
-      var nearest = null, bestDiff = Infinity;
-      for (var i = 0; i < hist.length; i++) {
-        var diff = Math.abs(Date.parse(hist[i].t) - tMs);
-        if (diff < bestDiff) { bestDiff = diff; nearest = hist[i]; }
-      }
-      if (nearest) rows.push({ region: region, row: nearest });
+      var payload = state.data.regions[region];
+      var nearest = null, bestDiff = Infinity, projected = false;
+      payload.history.forEach(function (h) {
+        var diff = Math.abs(Date.parse(h.t) - tMs);
+        if (diff < bestDiff) { bestDiff = diff; nearest = h; projected = false; }
+      });
+      // The dashed projection line has its own points (PSI only, no PM2.5) --
+      // without checking these too, tapping anywhere along it just kept
+      // showing the nearest *actual* reading, which barely moves.
+      (payload.projection || []).forEach(function (p) {
+        var diff = Math.abs(Date.parse(p.t) - tMs);
+        if (diff < bestDiff) { bestDiff = diff; nearest = p; projected = true; }
+      });
+      if (nearest) rows.push({ region: region, row: nearest, projected: projected });
     });
     if (!rows.length) return;
     showTooltip(evt, rows);
@@ -849,12 +856,13 @@ INDEX_HTML = r"""<!doctype html>
       var k = document.createElement("span");
       k.className = "k";
       k.style.color = state.data.colors[r.region];
-      k.textContent = r.region.charAt(0).toUpperCase() + r.region.slice(1);
+      k.textContent = r.region.charAt(0).toUpperCase() + r.region.slice(1) + (r.projected ? " (proj.)" : "");
       var v = document.createElement("span");
       v.className = "v";
-      var psi = r.row.psi === null ? "–" : Math.round(r.row.psi);
-      var pm = r.row.pm25_1h === null ? "–" : r.row.pm25_1h.toFixed(1);
-      v.textContent = "PSI " + psi + " / PM " + pm;
+      var psi = r.row.psi === null || r.row.psi === undefined ? "–" : Math.round(r.row.psi);
+      // Projection points only carry a PSI value (see aq_lib.compute_payload) --
+      // there's no projected 1-hr PM2.5 reading to show alongside it.
+      v.textContent = r.projected ? ("PSI ~" + psi) : ("PSI " + psi + " / PM " + (r.row.pm25_1h === null ? "–" : r.row.pm25_1h.toFixed(1)));
       row.appendChild(k); row.appendChild(v);
       els.tooltip.appendChild(row);
     });

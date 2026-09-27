@@ -170,6 +170,14 @@ Given current 24-hr baseline `B` and latest 1-hr reading `X` held flat:
   listener outside `.chart-card` (clears it), or "Reset view". A
   `pointercancel` (browser took the gesture over, e.g. a page scroll) is
   deliberately *not* treated as a tap -- only a genuine `pointerup` is.
+  `showReadingsAt()` (in `handleHover`/`selectPoint`) must check *both* a
+  region's `history` and `projection` arrays for the nearest point, not just
+  `history` -- projection points are PSI-only (no `pm25_1h`), tagged in the
+  tooltip row with `projected: true` and rendered as "PSI ~NN" with a
+  "(proj.)" region suffix, no PM value. Forgetting the projection array here
+  was an actual bug: tapping anywhere along the dashed projected-PSI line
+  just kept showing the nearest *actual* reading (barely changing), since
+  `history` has nothing out there to match against.
 - **Touch/mobile pan+pinch**: `attachInteraction()` in `index.html` tracks
   every active pointer per panel (`pointers` map keyed by `pointerId`) --
   1 pointer = pan (drag), 2 = pinch-zoom anchored at their midpoint,
