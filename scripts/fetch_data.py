@@ -260,6 +260,26 @@ def trim_retention(rows: dict[tuple[str, str], dict]) -> dict[tuple[str, str], d
     return kept
 
 
+def find_gap_days(rows: dict[tuple[str, str], dict]) -> list[str]:
+    """Scan existing history per region for internal gaps -- a missed run
+    can "heal" on the next run's cheap 'latest only' fetch (the trailing
+    timestamp looks recent again) without that next run ever going back to
+    refetch the specific hour(s) it missed, leaving a permanent hole in the
+    middle of the history. Returns the day(s) (YYYY-MM-DD) spanning any gap
+    wider than GAP_THRESHOLD_HOURS, per region, so main() can re-backfill
+    them alongside (or even without) a trailing-edge gap."""
+    days: set[str] = set()
+    for region in API_REGIONS:
+        timestamps = sorted(parse_ts(r["timestamp"]) for (_, rgn), r in rows.items() if rgn == region)
+        for prev, cur in zip(timestamps, timestamps[1:]):
+            if (cur - prev) > dt.timedelta(hours=GAP_THRESHOLD_HOURS):
+                d = prev.date()
+                while d <= cur.date():
+                    days.add(d.isoformat())
+                    d += dt.timedelta(days=1)
+    return sorted(days)
+
+
 def missing_days(last_ts: dt.datetime | None, now: dt.datetime) -> list[str]:
     if last_ts is None:
         # first-ever run: seed with a small lookback so the dashboard has
@@ -287,18 +307,25 @@ def main() -> None:
 
     run_kind = "latest only"
 
-    gap = last_ts is None or (now - last_ts) > dt.timedelta(hours=GAP_THRESHOLD_HOURS)
-    if gap:
-        days = missing_days(last_ts, now)
+    trailing_gap = last_ts is None or (now - last_ts) > dt.timedelta(hours=GAP_THRESHOLD_HOURS)
+    internal_gap_days = find_gap_days(existing)
+    if trailing_gap or internal_gap_days:
+        days = sorted(set(missing_days(last_ts, now)) | set(internal_gap_days))
         run_kind = f"latest + backfill({len(days)} day(s): {', '.join(days)})"
         if last_ts is None:
             log.info("no existing history found -- treating as first-ever run, backfilling %d day(s)", len(days))
-        else:
+        elif trailing_gap:
             log.info(
                 "gap detected: last recorded timestamp %s is more than %dh old -- backfilling %d day(s)",
                 last_ts.isoformat(),
                 GAP_THRESHOLD_HOURS,
                 len(days),
+            )
+        if internal_gap_days:
+            log.info(
+                "internal gap(s) found in existing history (a missed run that later self-healed) -- "
+                "re-backfilling day(s): %s",
+                ", ".join(internal_gap_days),
             )
         for i, day in enumerate(days):
             if i > 0:

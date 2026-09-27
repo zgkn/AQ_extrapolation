@@ -22,16 +22,17 @@ a dashed PSI projection toward the thresholds.
   that turns a region's CSV rows into {history, projection, thresholds}.
 - `scripts/fetch_data.py` -- incremental fetcher. Each run does a cheap
   "latest only" call (no `date` param) to both endpoints, and additionally
-  backfills via `?date=YYYY-MM-DD` per missing day if the last row in
-  `data/history.csv` is more than ~2h stale (missed run or first run).
-  Dedupes on `(timestamp, region)`, retains `aq_lib.RETENTION_HOURS` (8
-  days) of history -- the dashboard only shows `aq_lib.HISTORY_WINDOW_HOURS`
-  (7 days) of it; the extra buffer protects against a missed run needing
-  backfill. 7 days (not 24-48h) is deliberate now that the chart pans/zooms:
-  a longer default window gives useful multi-day trend context (real haze
-  episodes often build over several days) without hurting legibility, since
-  users can zoom into any sub-range rather than being stuck with everything
-  visible and cramped by default.
+  backfills via `?date=YYYY-MM-DD` per day that's either (a) missing at the
+  *trailing edge* -- the last row in `data/history.csv` is more than ~2h
+  stale (missed run or first run) -- or (b) has an *internal* gap: see
+  `find_gap_days()` below. Dedupes on `(timestamp, region)`, retains
+  `aq_lib.RETENTION_HOURS` (8 days) of history -- the dashboard only shows
+  `aq_lib.HISTORY_WINDOW_HOURS` (7 days) of it; the extra buffer protects
+  against a missed run needing backfill. 7 days (not 24-48h) is deliberate
+  now that the chart pans/zooms: a longer default window gives useful
+  multi-day trend context (real haze episodes often build over several
+  days) without hurting legibility, since users can zoom into any sub-range
+  rather than being stuck with everything visible and cramped by default.
 - `scripts/build_dashboard.py` -- writes `docs/data.json` (the numbers,
   via `compute_payload` per region) and `docs/index.html` (a static page,
   identical bytes every run -- it reads `data.json` client-side, so only
@@ -100,6 +101,24 @@ publishes it.
   retries 429/5xx with backoff (honoring `Retry-After`), and the backfill
   loop paces consecutive day-requests `BACKFILL_REQUEST_DELAY_S` apart. If
   backfills start failing again, raise that delay or the retry count first.
+- **Internal gaps (a hole in the *middle* of the history, not just a stale
+  trailing edge)**: the original gap check only looked at whether the very
+  *last* row was stale relative to "now" -- a single missed hourly run
+  self-heals on the next run's cheap "latest only" fetch (the trailing
+  timestamp looks recent again) without that next run ever going back to
+  refetch the specific hour(s) it missed, leaving a permanent hole that
+  would otherwise never get backfilled. `fetch_data.find_gap_days()` fixes
+  this by scanning each region's own sorted timestamps in the *existing*
+  history for any consecutive gap wider than `GAP_THRESHOLD_HOURS`,
+  independent of whether the trailing edge is stale, and returns the day(s)
+  spanning it; `main()` unions those days with the usual trailing-edge
+  `missing_days()` set before backfilling. Per-region (not just "does *some*
+  region have data for this timestamp") on purpose, since a partial-region
+  hole (one region missing while others are fine) wouldn't show up if you
+  only checked for the *existence* of a timestamp across any region. A gap
+  the upstream API itself never had data for will keep getting re-detected
+  and re-backfilled every run until it ages out of `RETENTION_HOURS` --
+  wasteful but bounded and harmless, not worth suppressing.
 
 ## PSI<->PM2.5 breakpoint table
 
