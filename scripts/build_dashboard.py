@@ -604,19 +604,75 @@ INDEX_HTML = r"""<!doctype html>
     return [lo, hi];
   }
 
+  function localXFromClientX(svg, clientX) {
+    var rect = svg.getBoundingClientRect();
+    var scale = state.width / rect.width;
+    return (clientX - rect.left) * scale - MARGIN.left;
+  }
+
+  function zoomAtLocalX(panel, localX, factor) {
+    var frac = Math.max(0, Math.min(1, localX / panel.innerW));
+    var cursorT = state.viewDomain[0] + frac * (state.viewDomain[1] - state.viewDomain[0]);
+    var span = (state.viewDomain[1] - state.viewDomain[0]) * factor;
+    var lo = cursorT - frac * span, hi = lo + span;
+    state.viewDomain = clampViewDomain([lo, hi]);
+    renderAll();
+  }
+
+  // Single pointer = pan (drag). Two pointers on the same panel = pinch-zoom,
+  // anchored at their midpoint. Lifting one finger of a pinch continues as a
+  // fresh pan from the remaining finger, matching native map/photo apps.
   function attachInteraction(panel) {
     var svg = panel.svg;
-    var dragState = null;
+    var pointers = {}; // pointerId -> {x, y}
+    var dragState = null; // {startX, startDomain}
+    var pinchState = null; // {ids: [id, id], lastDist}
+
+    function activeIds() { return Object.keys(pointers); }
+    function distanceBetween(idA, idB) {
+      var a = pointers[idA], b = pointers[idB];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+    function midpointX(idA, idB) {
+      return (pointers[idA].x + pointers[idB].x) / 2;
+    }
 
     svg.addEventListener("pointerdown", function (evt) {
       evt.preventDefault(); // otherwise a drag starting over an axis-label <text> triggers native text selection
-      svg.setPointerCapture(evt.pointerId);
-      svg.classList.add("dragging");
-      dragState = { startX: evt.clientX, startDomain: state.viewDomain.slice() };
+      try { svg.setPointerCapture(evt.pointerId); } catch (e) { /* capture is a nice-to-have, not required for pan/pinch to work */ }
+      pointers[evt.pointerId] = { x: evt.clientX, y: evt.clientY };
+      var ids = activeIds();
+
+      if (ids.length === 2) {
+        dragState = null;
+        pinchState = { ids: ids, lastDist: distanceBetween(ids[0], ids[1]) };
+        svg.classList.remove("dragging");
+      } else if (ids.length === 1) {
+        pinchState = null;
+        svg.classList.add("dragging");
+        dragState = { startX: evt.clientX, startDomain: state.viewDomain.slice() };
+      }
+      // 3rd+ simultaneous pointer (e.g. a resting palm): ignored, current gesture continues.
     });
 
     svg.addEventListener("pointermove", function (evt) {
+      if (!(evt.pointerId in pointers)) { handleHover(panel, evt); return; }
+      pointers[evt.pointerId] = { x: evt.clientX, y: evt.clientY };
+
+      if (pinchState) {
+        evt.preventDefault();
+        var ids = pinchState.ids;
+        if (!(ids[0] in pointers) || !(ids[1] in pointers)) return;
+        var dist = distanceBetween(ids[0], ids[1]);
+        if (pinchState.lastDist > 0 && dist > 0) {
+          zoomAtLocalX(panel, localXFromClientX(svg, midpointX(ids[0], ids[1])), pinchState.lastDist / dist);
+        }
+        pinchState.lastDist = dist;
+        return;
+      }
+
       if (dragState) {
+        evt.preventDefault();
         var scale = state.width / svg.getBoundingClientRect().width;
         var pxPerMs = panel.innerW / (dragState.startDomain[1] - dragState.startDomain[0]);
         var dxPx = (evt.clientX - dragState.startX) * scale;
@@ -625,43 +681,49 @@ INDEX_HTML = r"""<!doctype html>
         renderAll();
         return;
       }
+
       handleHover(panel, evt);
     });
 
-    function endDrag(evt) {
-      if (dragState) {
-        try { svg.releasePointerCapture(evt.pointerId); } catch (e) { /* already released */ }
+    function endPointer(evt) {
+      try { svg.releasePointerCapture(evt.pointerId); } catch (e) { /* already released */ }
+      delete pointers[evt.pointerId];
+      var ids = activeIds();
+
+      if (pinchState) {
+        if (ids.length < 2) {
+          pinchState = null;
+          if (ids.length === 1) {
+            dragState = { startX: pointers[ids[0]].x, startDomain: state.viewDomain.slice() };
+            svg.classList.add("dragging");
+          } else {
+            svg.classList.remove("dragging");
+          }
+        }
+      } else if (dragState && ids.length === 0) {
         dragState = null;
         svg.classList.remove("dragging");
       }
     }
-    svg.addEventListener("pointerup", endDrag);
-    svg.addEventListener("pointercancel", endDrag);
-    svg.addEventListener("pointerleave", function (evt) {
-      endDrag(evt);
+    svg.addEventListener("pointerup", endPointer);
+    svg.addEventListener("pointercancel", endPointer);
+    svg.addEventListener("pointerleave", function () {
+      // Pointer capture (set on pointerdown above) suppresses pointerleave
+      // for an actively-dragging/pinching pointer, so reaching here means
+      // this was just a hover, not a live gesture -- safe to hide the crosshair.
       state.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
       els.tooltip.hidden = true;
     });
 
     svg.addEventListener("wheel", function (evt) {
       evt.preventDefault();
-      var rect = svg.getBoundingClientRect();
-      var scale = state.width / rect.width;
-      var localX = (evt.clientX - rect.left) * scale - MARGIN.left;
-      var frac = Math.max(0, Math.min(1, localX / panel.innerW));
-      var cursorT = state.viewDomain[0] + frac * (state.viewDomain[1] - state.viewDomain[0]);
       var factor = evt.deltaY > 0 ? 1.15 : 1 / 1.15;
-      var span = (state.viewDomain[1] - state.viewDomain[0]) * factor;
-      var lo = cursorT - frac * span, hi = lo + span;
-      state.viewDomain = clampViewDomain([lo, hi]);
-      renderAll();
+      zoomAtLocalX(panel, localXFromClientX(svg, evt.clientX), factor);
     }, { passive: false });
   }
 
   function handleHover(panel, evt) {
-    var rect = panel.svg.getBoundingClientRect();
-    var scale = state.width / rect.width;
-    var localX = (evt.clientX - rect.left) * scale - MARGIN.left;
+    var localX = localXFromClientX(panel.svg, evt.clientX);
     var clampedX = Math.max(0, Math.min(panel.innerW, localX));
     var tMs = state.viewDomain[0] + (clampedX / panel.innerW) * (state.viewDomain[1] - state.viewDomain[0]);
 

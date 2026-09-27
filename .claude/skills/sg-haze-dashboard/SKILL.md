@@ -139,6 +139,22 @@ Given current 24-hr baseline `B` and latest 1-hr reading `X` held flat:
   it was the cause of an actual bug: labels overlapping into mush on a
   narrow phone screen until tick count was made width-aware), and the
   wheel handler's `1.15` factor is the zoom speed per scroll tick.
+- **Touch/mobile pan+pinch**: `attachInteraction()` in `index.html` tracks
+  every active pointer per panel (`pointers` map keyed by `pointerId`) --
+  1 pointer = pan (drag), 2 = pinch-zoom anchored at their midpoint,
+  releasing one finger of a pinch continues as a fresh pan from the
+  remaining finger. Real touch gestures don't fire `wheel` events, so
+  zoom must go through this path on mobile -- if pan/zoom feels broken on
+  a phone, check this logic, not the wheel handler. Note
+  `svg.setPointerCapture(...)` is wrapped in try/catch: it can throw in
+  edge cases (confirmed while testing with synthetic Playwright pointer
+  events, which aren't browser-"active" pointers), and since it's called
+  synchronously inside the pointerdown listener, an uncaught throw there
+  would abort the rest of that handler -- silently skipping the
+  drag/pinch-state setup that follows it. Test this interaction with
+  Playwright by dispatching real two-pointer `PointerEvent`s
+  (`pointerType: 'touch'`) directly, since Playwright's `touchscreen` API
+  has no multi-touch/pinch primitive.
 - **Any datetime formatting/display added later (in the JS)**: use
   `Intl.DateTimeFormat` with `timeZone: "Asia/Singapore"` (see `fmtSGT()`
   in `index.html`), never a bare `Date` method -- `toLocaleString()`/etc
