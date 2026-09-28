@@ -467,3 +467,9 @@ timestamp,region,pm25_one_hourly,psi_twenty_four_hourly,pm25_twenty_four_hourly,
 2026-09-28T13:00:00+08:00,north,38,60,20,api
 2026-09-28T13:00:00+08:00,south,75,72,31,api
 2026-09-28T13:00:00+08:00,west,61,70,29,api
+2026-09-28T14:00:00+08:00,central,84,75,33,api
+2026-09-28T14:00:00+08:00,east,66,68,27,api
+2026-09-28T14:00:00+08:00,national,77.8,70.8,29.4,derived_national_mean
+2026-09-28T14:00:00+08:00,north,48,61,21,api
+2026-09-28T14:00:00+08:00,south,112,77,35,api
+2026-09-28T14:00:00+08:00,west,79,73,31,api
