@@ -394,6 +394,16 @@ INDEX_HTML = r"""<!doctype html>
     }, opts || {})).format(new Date(ms));
   }
 
+  // en-CA formats numeric year/month/day as YYYY-MM-DD directly -- used for
+  // x-axis ticks at day-or-coarser zoom (see renderPanel), where showing a
+  // weekday+time label would either repeat the same date across every tick
+  // (misleading) or just be less scannable than a plain ISO date.
+  function fmtAxisDate(ms) {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: SG_TZ, year: "numeric", month: "2-digit", day: "2-digit"
+    }).format(new Date(ms));
+  }
+
   function niceTicks(min, max, count) {
     if (min === max) { min -= 1; max += 1; }
     var span = max - min;
@@ -411,9 +421,14 @@ INDEX_HTML = r"""<!doctype html>
   // Time-tick step, chosen so ticks fit the *actual* available width
   // (narrow mobile screens need fewer ticks or "Sat 12:00"-style labels
   // collide into illegible mush) -- aligned to nice SGT-hour boundaries
-  // (not UTC/epoch ones -- otherwise ticks land on odd times).
+  // (not UTC/epoch ones -- otherwise ticks land on odd times). Extends up
+  // to a 60-day step so a fully-zoomed-out view (now up to 60 days of
+  // history) doesn't fall through to the old 2-day max and pack in far more
+  // ticks than maxTicks allows.
   var MIN_PX_PER_TICK = 65;
-  var STEP_CANDIDATES_MS = [15, 30, 60, 120, 180, 360, 720, 1440, 2880].map(function (m) { return m * 60 * 1000; });
+  var STEP_CANDIDATES_MS = [15, 30, 60, 120, 180, 360, 720, 1440, 2880, 4320, 10080, 20160, 43200, 86400]
+    .map(function (m) { return m * 60 * 1000; });
+  var ONE_DAY_MS = 24 * 3600 * 1000;
   function timeTicks(domain, innerW) {
     var span = domain[1] - domain[0];
     var maxTicks = Math.max(2, Math.floor(innerW / MIN_PX_PER_TICK));
@@ -425,7 +440,7 @@ INDEX_HTML = r"""<!doctype html>
     var first = Math.ceil(startLocal / step) * step - SG_OFFSET_MS;
     var ticks = [];
     for (var t = first; t <= domain[1]; t += step) ticks.push(t);
-    return ticks;
+    return { ticks: ticks, stepMs: step };
   }
 
   function scaleLinear(domain, range) {
@@ -578,14 +593,15 @@ INDEX_HTML = r"""<!doctype html>
       panel.chromeGroup.appendChild(lbl);
     });
 
-    var ticks = timeTicks(state.viewDomain, innerW);
-    ticks.forEach(function (t) {
+    var timeTickInfo = timeTicks(state.viewDomain, innerW);
+    var useDateTicks = timeTickInfo.stepMs >= ONE_DAY_MS;
+    timeTickInfo.ticks.forEach(function (t) {
       var xp = x(t);
       panel.gridGroup.appendChild(svgEl("line", { x1: xp, x2: xp, y1: 0, y2: innerH, stroke: "var(--grid)", "stroke-width": 1 }));
       if (panel.isPsi) {
         panel.chromeGroup.appendChild(svgEl("line", { x1: xp, x2: xp, y1: innerH, y2: innerH + 4, stroke: "var(--faint)", "stroke-width": 1 }));
         var lbl = svgEl("text", { class: "axis-label", x: xp, y: innerH + 15, "text-anchor": "middle" });
-        lbl.textContent = fmtSGT(t);
+        lbl.textContent = useDateTicks ? fmtAxisDate(t) : fmtSGT(t);
         panel.chromeGroup.appendChild(lbl);
       }
     });

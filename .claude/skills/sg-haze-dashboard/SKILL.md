@@ -275,6 +275,19 @@ Given current 24-hr baseline `B` and latest 1-hr reading `X` held flat:
   title); the JS rewrite's tick-alignment math (`timeTicks()`) also needs
   the explicit `SG_OFFSET_MS` shift, or ticks land on odd times relative
   to SGT hour boundaries.
+- **X-axis tick label format switches on zoom level**: `timeTicks()`
+  returns `{ ticks, stepMs }` (not just a bare array) so `renderPanel()`
+  can pick a formatter based on the chosen step -- `fmtAxisDate()`
+  (`Intl.DateTimeFormat("en-CA", ...)`, which formats as `YYYY-MM-DD`
+  directly) for day-or-coarser steps (`stepMs >= ONE_DAY_MS`), `fmtSGT()`
+  ("Wed 21:00" style) for anything finer. Always showing dates would
+  repeat the same string across every tick once you zoom into a single
+  day (useless); always showing weekday+time would be unreadable/pointless
+  once zoomed out to weeks. `STEP_CANDIDATES_MS` was also extended up to a
+  60-day step (previously topped out at 2 days) -- with `HISTORY_WINDOW_HOURS`
+  now 60 days, the old max meant a fully-zoomed-out view had no step coarse
+  enough to satisfy `maxTicks`, so it fell through to the finest available
+  (2-day) step and packed in far more ticks than the width allowed.
 - **Debug a bad run**: check the Action's logs for `run type: latest only`
   vs `latest + backfill(...)`, and the `retention: trimmed N row(s)` line.
 - **If pushes start conflicting**: the workflow already does
