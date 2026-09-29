@@ -24,15 +24,19 @@ a dashed PSI projection toward the thresholds.
   "latest only" call (no `date` param) to both endpoints, and additionally
   backfills via `?date=YYYY-MM-DD` per day that's either (a) missing at the
   *trailing edge* -- the last row in `data/history.csv` is more than ~2h
-  stale (missed run or first run) -- or (b) has an *internal* gap: see
-  `find_gap_days()` below. Dedupes on `(timestamp, region)`, retains
-  `aq_lib.RETENTION_HOURS` (8 days) of history -- the dashboard only shows
-  `aq_lib.HISTORY_WINDOW_HOURS` (7 days) of it; the extra buffer protects
-  against a missed run needing backfill. 7 days (not 24-48h) is deliberate
-  now that the chart pans/zooms: a longer default window gives useful
-  multi-day trend context (real haze episodes often build over several
-  days) without hurting legibility, since users can zoom into any sub-range
-  rather than being stuck with everything visible and cramped by default.
+  stale (missed run or first run), (b) an *internal* gap: see
+  `find_gap_days()` below, or (c) missing at the *leading edge* -- the
+  earliest retained row doesn't reach back as far as `RETENTION_HOURS`
+  allows: see `find_leading_gap_days()` below. Dedupes on
+  `(timestamp, region)`, retains `aq_lib.RETENTION_HOURS` (61 days) of
+  history -- the dashboard only shows `aq_lib.HISTORY_WINDOW_HOURS`
+  (60 days) of it; the extra buffer protects against a missed run needing
+  backfill. A window of weeks (not 24-48h) is deliberate now that the chart
+  pans/zooms: a longer default window gives useful long-range trend context
+  (real haze episodes often build over several days, and month-to-month
+  comparison needs even more) without hurting legibility, since users can
+  zoom into any sub-range rather than being stuck with everything visible
+  and cramped by default.
 - `scripts/build_dashboard.py` -- writes `docs/data.json` (the numbers,
   via `compute_payload` per region) and `docs/index.html` (a static page,
   identical bytes every run -- it reads `data.json` client-side, so only
@@ -119,6 +123,26 @@ publishes it.
   the upstream API itself never had data for will keep getting re-detected
   and re-backfilled every run until it ages out of `RETENTION_HOURS` --
   wasteful but bounded and harmless, not worth suppressing.
+- **Leading-edge gaps (raising `RETENTION_HOURS`/`HISTORY_WINDOW_HOURS`
+  after history already exists)**: neither the trailing-edge check nor
+  `find_gap_days()` looks *before* the earliest retained row, so simply
+  raising the retention window in `aq_lib.py` wouldn't by itself backfill
+  the newly-wanted older days -- the dashboard would just grow into the
+  bigger window naturally over the following days/weeks/months, which
+  isn't what you want when you increase it deliberately (e.g. 7 days -> 60
+  days). `fetch_data.find_leading_gap_days()` compares the earliest
+  retained timestamp against `now - RETENTION_HOURS`; if there's a gap, it
+  returns the day(s) between them so `main()` backfills them on the very
+  next run. This can mean a *lot* of day-requests in one run the first time
+  you raise the window a long way (e.g. 7 -> 61 days is ~54 extra days x 2
+  endpoints, paced `BACKFILL_REQUEST_DELAY_S` apart -- a few minutes, not
+  instant); it self-resolves after that one run succeeds and never
+  re-triggers unless the window is raised again. This can't be exercised
+  from a local dev session if your egress network policy blocks
+  `api-open.data.gov.sg` (only the GitHub Actions runner may have access) --
+  verify with mocked `existing` rows instead (see `find_leading_gap_days()`
+  in `fetch_data.py`), and let the actual backfill happen inside the next
+  triggered workflow run.
 
 ## PSI<->PM2.5 breakpoint table
 
@@ -152,9 +176,12 @@ Given current 24-hr baseline `B` and latest 1-hr reading `X` held flat:
   chart's threshold lines and `compute_payload`'s ETA math import it from
   there, so there's one place to change.
 - **Change how much history the chart shows**: edit
-  `HISTORY_WINDOW_HOURS` in `aq_lib.py` (currently 7 days). If you push it
-  past `RETENTION_HOURS` (8 days), raise that too, or the chart will just
-  show whatever's left after trimming.
+  `HISTORY_WINDOW_HOURS` in `aq_lib.py` (currently 60 days). If you push it
+  past `RETENTION_HOURS` (61 days), raise that too, or the chart will just
+  show whatever's left after trimming. Raising either doesn't need a manual
+  backfill -- `find_leading_gap_days()` (see above) makes the next
+  triggered/scheduled run backfill the newly-included older days on its
+  own.
 - **Change region colors**: edit `REGION_COLORS` in `build_dashboard.py`.
   Keep a fixed order and don't cycle/reuse hues across regions --
   see the dataviz skill if adding a 6th+ series.

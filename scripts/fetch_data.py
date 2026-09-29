@@ -280,6 +280,29 @@ def find_gap_days(rows: dict[tuple[str, str], dict]) -> list[str]:
     return sorted(days)
 
 
+def find_leading_gap_days(rows: dict[tuple[str, str], dict], now: dt.datetime) -> list[str]:
+    """If the *earliest* retained row is more recent than RETENTION_HOURS
+    would allow -- typically because RETENTION_HOURS/HISTORY_WINDOW_HOURS
+    was just raised in aq_lib.py -- backfill the days between the retention
+    boundary and that earliest row, so a config change takes effect on the
+    very next run instead of the dashboard slowly growing into the new
+    window over the following weeks/months. Distinct from find_gap_days(),
+    which only looks *between* existing rows, never before the earliest
+    one."""
+    if not rows:
+        return []
+    earliest = min(parse_ts(r["timestamp"]) for r in rows.values())
+    boundary = now - dt.timedelta(hours=RETENTION_HOURS)
+    if earliest <= boundary + dt.timedelta(hours=GAP_THRESHOLD_HOURS):
+        return []
+    days = []
+    d = boundary.date()
+    while d <= earliest.date():
+        days.append(d.isoformat())
+        d += dt.timedelta(days=1)
+    return days
+
+
 def missing_days(last_ts: dt.datetime | None, now: dt.datetime) -> list[str]:
     if last_ts is None:
         # first-ever run: seed with a small lookback so the dashboard has
@@ -309,8 +332,9 @@ def main() -> None:
 
     trailing_gap = last_ts is None or (now - last_ts) > dt.timedelta(hours=GAP_THRESHOLD_HOURS)
     internal_gap_days = find_gap_days(existing)
-    if trailing_gap or internal_gap_days:
-        days = sorted(set(missing_days(last_ts, now)) | set(internal_gap_days))
+    leading_gap_days = find_leading_gap_days(existing, now)
+    if trailing_gap or internal_gap_days or leading_gap_days:
+        days = sorted(set(missing_days(last_ts, now)) | set(internal_gap_days) | set(leading_gap_days))
         run_kind = f"latest + backfill({len(days)} day(s): {', '.join(days)})"
         if last_ts is None:
             log.info("no existing history found -- treating as first-ever run, backfilling %d day(s)", len(days))
@@ -326,6 +350,12 @@ def main() -> None:
                 "internal gap(s) found in existing history (a missed run that later self-healed) -- "
                 "re-backfilling day(s): %s",
                 ", ".join(internal_gap_days),
+            )
+        if leading_gap_days:
+            log.info(
+                "retained history doesn't reach back as far as RETENTION_HOURS allows (likely just raised) -- "
+                "backfilling leading day(s): %s",
+                ", ".join(leading_gap_days),
             )
         for i, day in enumerate(days):
             if i > 0:
