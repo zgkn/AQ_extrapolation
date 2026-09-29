@@ -29,7 +29,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # continue-on-error for the same reason as the build step below: an
+      # unexpected crash here (e.g. a network error not caught by
+      # fetch_data.py's own retry logic) must never skip the commit step and
+      # discard data already fetched earlier in this same run.
       - name: Fetch latest PM2.5 + PSI data
+        id: fetch_data
+        continue-on-error: true
         run: python scripts/fetch_data.py
 
       - name: Build dashboard (docs/data.json + docs/index.html)
@@ -64,8 +70,8 @@ jobs:
             git pull --rebase origin "${GITHUB_REF_NAME}"
           done
 
-      - name: Fail job if the build step failed
-        if: steps.build_dashboard.outcome == 'failure'
+      - name: Fail job if the fetch or build step failed
+        if: steps.fetch_data.outcome == 'failure' || steps.build_dashboard.outcome == 'failure'
         run: |
-          echo "The build step failed; data was still committed above. See that step's log."
+          echo "The fetch and/or build step failed; whatever data existed was still committed above. See that step's log."
           exit 1

@@ -102,9 +102,35 @@ publishes it.
   active for any given row.
 - **Rate limiting:** the live API 429'd on a burst backfill (6 requests in
   ~2s during the very first run's 3-day backfill). `fetch_data.get_with_retry()`
-  retries 429/5xx with backoff (honoring `Retry-After`), and the backfill
-  loop paces consecutive day-requests `BACKFILL_REQUEST_DELAY_S` apart. If
-  backfills start failing again, raise that delay or the retry count first.
+  retries 429/5xx *and* connection-level errors (see below) with backoff
+  (honoring `Retry-After` on 429), and the backfill loop paces consecutive
+  day-requests `BACKFILL_REQUEST_DELAY_S` apart. If backfills start failing
+  again, raise that delay or the retry count first.
+- **A single backfill day failing must never lose every other day's data**:
+  confirmed in production during the one-time 58-day deep backfill after
+  raising `RETENTION_HOURS` -- a plain `requests.exceptions.ConnectionError`
+  (a network-level reset, no HTTP response at all) on day ~15 of ~58 wasn't
+  caught by `get_with_retry()` (which only handled HTTP 429/5xx status
+  codes), crashing the whole script. Because `fetch_data.py` only calls
+  `save()` once at the very end of `main()`, that crash discarded all ~15
+  days already fetched that run, and because the workflow's "Fetch" step had
+  no `continue-on-error`, it also skipped the commit step entirely. Fixed
+  two ways: (1) `get_with_retry()` now retries
+  `requests.exceptions.RequestException` (covers connection resets,
+  timeouts, etc.), not just HTTP status codes; (2) the backfill loop in
+  `main()` wraps each day's fetch in its own try/except -- a day that still
+  fails after `get_with_retry()` exhausts its retries is logged and skipped
+  (it stays missing, so `find_gap_days()`/`find_leading_gap_days()` pick it
+  back up next run) rather than aborting the whole run and losing every
+  other day already merged into `new_rows`. The workflow's "Fetch" step also
+  now has `continue-on-error: true` (mirroring the build step) so an
+  unexpected crash there still lets the commit step run on whatever was
+  fetched before failing, and the final gate step checks both steps'
+  outcomes. Test this kind of fix by mocking `requests.get` to fail
+  selectively (only for backfill/date requests, not the initial "latest
+  only" calls) and confirming `main()` completes and saves rather than
+  raising -- not by hitting the real API, which this session's own network
+  policy blocks anyway (see the leading-edge-gaps note below).
 - **Internal gaps (a hole in the *middle* of the history, not just a stale
   trailing edge)**: the original gap check only looked at whether the very
   *last* row was stale relative to "now" -- a single missed hourly run

@@ -51,11 +51,25 @@ PM25_24H_KEY_PATTERN = re.compile(r"pm.?2.?5", re.IGNORECASE)
 
 
 def get_with_retry(url: str, params: dict) -> requests.Response:
-    """GET with retry/backoff on 429 and 5xx -- data.gov.sg rate-limits
-    bursts of requests (seen in practice during a multi-day backfill), and
-    honors a Retry-After header on 429."""
+    """GET with retry/backoff on 429, 5xx, and connection-level errors --
+    data.gov.sg rate-limits bursts of requests (seen in practice during a
+    multi-day backfill), and honors a Retry-After header on 429. A plain
+    connection reset (no HTTP response at all, e.g. a transient network
+    hiccup mid-backfill) is caught here too -- confirmed in production
+    during a 58-day deep backfill, where an uncaught
+    requests.exceptions.ConnectionError on day ~15 crashed the whole run and
+    (since fetch_data.py only saves once at the very end) discarded all the
+    days already fetched that run."""
     for attempt in range(1, MAX_RETRIES + 1):
-        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        try:
+            resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        except requests.exceptions.RequestException as e:
+            if attempt == MAX_RETRIES:
+                raise
+            wait = min(2 ** attempt, 30)
+            log.warning("%s from %s (attempt %d/%d) -- retrying in %.1fs", e.__class__.__name__, url, attempt, MAX_RETRIES, wait)
+            time.sleep(wait)
+            continue
         if resp.status_code == 429 or resp.status_code >= 500:
             if attempt == MAX_RETRIES:
                 resp.raise_for_status()
@@ -357,16 +371,29 @@ def main() -> None:
                 "backfilling leading day(s): %s",
                 ", ".join(leading_gap_days),
             )
+        failed_days = []
         for i, day in enumerate(days):
             if i > 0:
                 time.sleep(BACKFILL_REQUEST_DELAY_S)
-            day_pm25_items, echo1 = fetch_items(PM25_URL, date=day)
-            check_date_echo(day, echo1, PM25_URL)
-            time.sleep(BACKFILL_REQUEST_DELAY_S)
-            day_psi_items, echo2 = fetch_items(PSI_URL, date=day)
-            check_date_echo(day, echo2, PSI_URL)
+            try:
+                day_pm25_items, echo1 = fetch_items(PM25_URL, date=day)
+                check_date_echo(day, echo1, PM25_URL)
+                time.sleep(BACKFILL_REQUEST_DELAY_S)
+                day_psi_items, echo2 = fetch_items(PSI_URL, date=day)
+                check_date_echo(day, echo2, PSI_URL)
+            except requests.exceptions.RequestException as e:
+                # Don't let one persistently-failing day (get_with_retry
+                # already exhausted its own retries) abort the whole run and
+                # discard every other day already fetched -- skip it and
+                # keep going. It stays missing, so find_gap_days()/
+                # find_leading_gap_days() will pick it back up next run.
+                log.warning("giving up on day=%s after retries exhausted (%s) -- skipping, will retry next run", day, e)
+                failed_days.append(day)
+                continue
             day_rows = rows_from_items(day_pm25_items, day_psi_items)
             new_rows.update(day_rows)
+        if failed_days:
+            log.warning("%d/%d backfill day(s) failed and were skipped: %s", len(failed_days), len(days), ", ".join(failed_days))
     else:
         log.info("last recorded timestamp %s is recent -- skipping backfill", last_ts.isoformat() if last_ts else "n/a")
 
