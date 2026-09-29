@@ -752,7 +752,10 @@
     var timeRow = document.createElement("div");
     timeRow.className = "row";
     var k0 = document.createElement("span"); k0.className = "k"; k0.textContent = "Time";
-    var v0 = document.createElement("span"); v0.className = "v"; v0.textContent = fmtSGT(Date.parse(rows[0].row.t));
+    var tMs0 = Date.parse(rows[0].row.t);
+    // Include the date, not just weekday+time -- with up to 60 days of
+    // history now, "Wed 21:00" alone doesn't say *which* Wednesday.
+    var v0 = document.createElement("span"); v0.className = "v"; v0.textContent = fmtAxisDate(tMs0) + " " + fmtSGT(tMs0, { weekday: undefined });
     timeRow.appendChild(k0); timeRow.appendChild(v0);
     els.tooltip.appendChild(timeRow);
 
