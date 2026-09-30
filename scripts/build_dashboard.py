@@ -303,6 +303,12 @@ INDEX_HTML = r"""<!doctype html>
   var H_PM25 = 220, H_PSI = 250;
   var MIN_SPAN_MS = 3 * 3600 * 1000; // can't zoom in tighter than 3h
   var TAP_MAX_MOVE_PX = 8; // pointerdown->up movement under this counts as a tap, not a drag
+  // The chart retains/can show up to HISTORY_WINDOW_HOURS (60 days, see
+  // aq_lib.py) of history, but starting zoomed out that far makes the
+  // initial view cluttered and hard to read. Default (and "Reset view")
+  // to the most recent 48h instead -- the full range is still just a
+  // pan/zoom away.
+  var DEFAULT_VIEW_MS = 48 * 3600 * 1000;
 
   var state = {
     data: null,
@@ -337,7 +343,7 @@ INDEX_HTML = r"""<!doctype html>
       els.toggleTableBtn.textContent = hidden ? "Hide data table" : "View data table";
     });
     els.resetBtn.addEventListener("click", function () {
-      state.viewDomain = state.fullDomain.slice();
+      state.viewDomain = defaultViewDomain();
       state.pinned = false;
       els.tooltip.hidden = true;
       renderAll();
@@ -372,7 +378,7 @@ INDEX_HTML = r"""<!doctype html>
         });
         if (!allT.length) throw new Error("no data points in data.json");
         state.fullDomain = [Math.min.apply(null, allT), Math.max.apply(null, allT)];
-        state.viewDomain = state.fullDomain.slice();
+        state.viewDomain = defaultViewDomain();
         computeYDomains();
 
         var asOfMs = Math.max.apply(null, Object.keys(data.regions).map(function (r) {
@@ -679,6 +685,13 @@ INDEX_HTML = r"""<!doctype html>
     var crosshair = svgEl("line", { x1: -10, x2: -10, y1: 0, y2: innerH, stroke: "var(--faint)", "stroke-width": 1, visibility: "hidden" });
     panel.chromeGroup.appendChild(crosshair);
     panel.crosshair = crosshair;
+  }
+
+  function defaultViewDomain() {
+    var full = state.fullDomain;
+    var hi = full[1];
+    var lo = Math.max(full[0], hi - DEFAULT_VIEW_MS);
+    return [lo, hi];
   }
 
   function clampViewDomain(domain) {
