@@ -145,8 +145,23 @@ INDEX_HTML = r"""<!doctype html>
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   main { max-width: 900px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
   h1 { font-size: 1.4rem; margin: 0 0 4px; }
   .subtitle { color: var(--muted); font-size: 0.9rem; margin: 0 0 12px; }
+  .refresh-btn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font: inherit;
+    font-size: 0.8rem;
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--ink);
+    cursor: pointer;
+  }
   .toolbar {
     display: flex;
     align-items: center;
@@ -232,8 +247,11 @@ INDEX_HTML = r"""<!doctype html>
 <body>
 <main>
   <header>
-    <h1>Singapore Haze Dashboard</h1>
-    <p class="subtitle" id="subtitle">Loading&hellip;</p>
+    <div>
+      <h1>Singapore Haze Dashboard</h1>
+      <p class="subtitle" id="subtitle">Loading&hellip;</p>
+    </div>
+    <button class="refresh-btn" id="refresh-page" type="button" title="Reload the page to fetch the latest data">&#8635; Refresh</button>
   </header>
 
   <div class="toolbar">
@@ -305,10 +323,14 @@ INDEX_HTML = r"""<!doctype html>
     els.legend = document.getElementById("legend");
     els.tooltip = document.getElementById("tooltip");
     els.resetBtn = document.getElementById("reset-view");
+    els.refreshBtn = document.getElementById("refresh-page");
     els.toggleTableBtn = document.getElementById("toggle-table");
     els.tableWrap = document.getElementById("table-wrap");
     els.tableBody = document.getElementById("data-table-body");
 
+    els.refreshBtn.addEventListener("click", function () {
+      location.reload();
+    });
     els.toggleTableBtn.addEventListener("click", function () {
       var hidden = els.tableWrap.hidden;
       els.tableWrap.hidden = !hidden;
