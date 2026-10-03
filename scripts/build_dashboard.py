@@ -31,7 +31,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from aq_lib import API_REGIONS, HISTORY_PATH, compute_payload  # noqa: E402
+from aq_lib import API_REGIONS, HISTORY_PATH, THRESHOLDS, compute_payload, psi_to_pm25  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("build_dashboard")
@@ -82,8 +82,18 @@ def main() -> None:
 
     os.makedirs(DOCS_DIR, exist_ok=True)
 
+    # The PM2.5-equivalent of each PSI threshold, for reference lines on the
+    # PM2.5 panel -- a single value per threshold, NOT per region. The
+    # flat-hold projection fully replaces the 24h average by hour 24
+    # (avg(24h) = X), so "what flat PM2.5 is needed to reach this PSI
+    # within 24h" is a pure breakpoint-table conversion, independent of any
+    # region's current baseline. Drawing it per region would just stack
+    # identical lines on top of each other -- see the threshold-status
+    # table (which *does* vary per region, via reachable/hours/eta) for
+    # the number that actually differs.
     out = {
         "colors": REGION_COLORS,
+        "pm25_thresholds": [{"psi": t, "pm25": round(psi_to_pm25(t), 1)} for t in THRESHOLDS],
         "regions": payloads,
     }
     with open(DATA_PATH, "w") as f:
@@ -267,7 +277,7 @@ INDEX_HTML = r"""<!doctype html>
   <div class="legend" id="legend"></div>
 
   <div class="chart-card">
-    <div class="panel-title">PM2.5 (&micro;g/m&sup3;, 1-hr)</div>
+    <div class="panel-title">PM2.5 (&micro;g/m&sup3;, 1-hr) &mdash; grey lines mark the level that would push 24-hr PSI to 100/150/200</div>
     <svg class="chart" id="chart-pm25"></svg>
     <div class="panel-title">PSI (24-hr) &mdash; solid = actual, dashed = projected (flat 1-hr PM2.5 held constant)</div>
     <svg class="chart" id="chart-psi"></svg>
@@ -663,6 +673,20 @@ INDEX_HTML = r"""<!doctype html>
         panel.plot.appendChild(svgEl("line", { x1: 0, x2: innerW, y1: y(th), y2: y(th), stroke: "var(--faint)", "stroke-width": 1 }));
         var lbl = svgEl("text", { class: "threshold-label", x: innerW - 2, y: y(th) - 3, "text-anchor": "end" });
         lbl.textContent = "PSI " + th;
+        panel.chromeGroup.appendChild(lbl);
+      });
+    } else if (state.data.pm25_thresholds) {
+      // The PM2.5 level each PSI threshold corresponds to -- a single
+      // reference value per threshold (not per region, see pm25_thresholds
+      // in build_dashboard.py for why), only drawn when it falls inside
+      // the current Y range so a quiet low-PM2.5 day isn't forced to
+      // stretch the axis up to the PSI-200 equivalent (150+) and crush the
+      // actual readings into an unreadable sliver.
+      state.data.pm25_thresholds.forEach(function (pt) {
+        if (pt.pm25 < yDomain[0] || pt.pm25 > yDomain[1]) return;
+        panel.plot.appendChild(svgEl("line", { x1: 0, x2: innerW, y1: y(pt.pm25), y2: y(pt.pm25), stroke: "var(--faint)", "stroke-width": 1 }));
+        var lbl = svgEl("text", { class: "threshold-label", x: innerW - 2, y: y(pt.pm25) - 3, "text-anchor": "end" });
+        lbl.textContent = "→ PSI " + pt.psi;
         panel.chromeGroup.appendChild(lbl);
       });
     }
