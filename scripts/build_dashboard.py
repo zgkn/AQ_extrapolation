@@ -198,6 +198,11 @@ INDEX_HTML = r"""<!doctype html>
     padding: 10px 12px 4px;
   }
   .panel-title { font-size: 0.85rem; color: var(--muted); text-align: center; margin: 2px 0 4px; }
+  .status-card { margin-top: 14px; }
+  .status-card .table-wrap { max-height: none; }
+  .status-note { margin: 8px 2px 2px; font-size: 0.76rem; color: var(--muted); line-height: 1.4; }
+  td.status-ok { font-variant-numeric: tabular-nums; }
+  td.status-none { color: var(--faint); }
   svg.chart {
     width: 100%; height: auto; display: block; touch-action: none; cursor: grab;
     user-select: none; -webkit-user-select: none;
@@ -268,6 +273,19 @@ INDEX_HTML = r"""<!doctype html>
     <svg class="chart" id="chart-psi"></svg>
   </div>
 
+  <div class="chart-card status-card">
+    <div class="panel-title">Threshold status &mdash; projected over the next 24h</div>
+    <div class="table-wrap">
+      <table class="data-table" id="status-table">
+        <thead>
+          <tr><th>Region</th><th>PSI now</th><th>&rarr; 100</th><th>&rarr; 150</th><th>&rarr; 200</th></tr>
+        </thead>
+        <tbody id="status-table-body"></tbody>
+      </table>
+    </div>
+    <p class="status-note">&ndash; means not on track to cross that threshold within 24h at today's current 1-hr reading &mdash; see the dashed PSI projection above for the trend.</p>
+  </div>
+
   <div class="table-section">
     <button id="toggle-table" type="button">View data table</button>
     <div class="table-wrap" id="table-wrap" hidden>
@@ -333,6 +351,7 @@ INDEX_HTML = r"""<!doctype html>
     els.toggleTableBtn = document.getElementById("toggle-table");
     els.tableWrap = document.getElementById("table-wrap");
     els.tableBody = document.getElementById("data-table-body");
+    els.statusTableBody = document.getElementById("status-table-body");
 
     els.refreshBtn.addEventListener("click", function () {
       location.reload();
@@ -387,6 +406,7 @@ INDEX_HTML = r"""<!doctype html>
         els.subtitle.textContent = "Latest reading: " + fmtSGT(asOfMs, { year: "numeric", month: "short", day: "2-digit" }) + " SGT";
 
         buildLegend(data.colors);
+        buildStatusTable(data);
         buildTable(data);
         measureWidth();
         buildPanel("chart-pm25", false);
@@ -928,6 +948,46 @@ INDEX_HTML = r"""<!doctype html>
     els.tooltip.style.top = (evt.clientY + 14) + "px";
   }
 
+  // One row per region, one column per threshold -- a scannable "is this
+  // region on track to cross X within 24h, and when" view. The "needed
+  // flat PM2.5" value (see aq_lib.time_to_threshold) is the SAME for every
+  // region at a given threshold (the flat-hold projection fully replaces
+  // the 24h window by hour 24, so the starting baseline drops out of the
+  // math) -- what genuinely varies per region is whether today's actual
+  // latest reading already puts it on track, and if so, how soon. That's
+  // the "reachable"/"hours"/"eta" fields this reads, not needed_flat_pm25.
+  function buildStatusTable(data) {
+    var colors = data.colors;
+    els.statusTableBody.innerHTML = "";
+    Object.keys(data.regions).forEach(function (region) {
+      var payload = data.regions[region];
+      var last = payload.history.length ? payload.history[payload.history.length - 1] : null;
+      var tr = document.createElement("tr");
+
+      var regionCell = document.createElement("td");
+      regionCell.textContent = region.charAt(0).toUpperCase() + region.slice(1);
+      regionCell.style.color = colors[region];
+      regionCell.style.fontWeight = "600";
+      tr.appendChild(regionCell);
+
+      appendCell(tr, last && last.psi !== null && last.psi !== undefined ? Math.round(last.psi) : "–");
+
+      THRESHOLDS.forEach(function (target) {
+        var th = null;
+        for (var i = 0; i < payload.thresholds.length; i++) {
+          if (payload.thresholds[i].value === target) { th = payload.thresholds[i]; break; }
+        }
+        if (th && th.reachable) {
+          appendCell(tr, th.hours.toFixed(1) + "h (" + fmtSGT(Date.parse(th.eta)) + ")", "status-ok");
+        } else {
+          appendCell(tr, "–", "status-none");
+        }
+      });
+
+      els.statusTableBody.appendChild(tr);
+    });
+  }
+
   function buildTable(data) {
     var rows = [];
     Object.keys(data.regions).forEach(function (region) {
@@ -949,9 +1009,10 @@ INDEX_HTML = r"""<!doctype html>
     });
   }
 
-  function appendCell(tr, text) {
+  function appendCell(tr, text, className) {
     var td = document.createElement("td");
     td.textContent = text;
+    if (className) td.className = className;
     tr.appendChild(td);
   }
 })();
