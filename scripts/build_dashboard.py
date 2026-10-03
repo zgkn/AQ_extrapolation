@@ -283,7 +283,7 @@ INDEX_HTML = r"""<!doctype html>
         <tbody id="status-table-body"></tbody>
       </table>
     </div>
-    <p class="status-note">&ndash; means not on track to cross that threshold within 24h at today's current 1-hr reading &mdash; see the dashed PSI projection above for the trend.</p>
+    <p class="status-note">&ndash; means not on track to cross that threshold within 24h at today's current 1-hr reading (see the dashed PSI projection above for the trend); N/A means the current PSI is already at or above it.</p>
   </div>
 
   <div class="table-section">
@@ -970,9 +970,17 @@ INDEX_HTML = r"""<!doctype html>
       regionCell.style.fontWeight = "600";
       tr.appendChild(regionCell);
 
-      appendCell(tr, last && last.psi !== null && last.psi !== undefined ? Math.round(last.psi) : "–");
+      var currentPsi = last && last.psi !== null && last.psi !== undefined ? last.psi : null;
+      appendCell(tr, currentPsi !== null ? Math.round(currentPsi) : "–");
 
       THRESHOLDS.forEach(function (target) {
+        // Already past this threshold -- "time until it crosses" doesn't
+        // apply, so don't show a dash (which reads as "not on track") or
+        // run it through the reachable/hours math at all.
+        if (currentPsi !== null && currentPsi >= target) {
+          appendCell(tr, "N/A", "status-none");
+          return;
+        }
         var th = null;
         for (var i = 0; i < payload.thresholds.length; i++) {
           if (payload.thresholds[i].value === target) { th = payload.thresholds[i]; break; }
