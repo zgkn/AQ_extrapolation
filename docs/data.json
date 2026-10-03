@@ -6,6 +6,20 @@
     "west": "#eda100",
     "central": "#e87ba4"
   },
+  "pm25_thresholds": [
+    {
+      "psi": 100,
+      "pm25": 55.4
+    },
+    {
+      "psi": 150,
+      "pm25": 102.9
+    },
+    {
+      "psi": 200,
+      "pm25": 150.4
+    }
+  ],
   "regions": {
     "north": {
       "region": "north",
