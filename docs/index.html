@@ -973,7 +973,8 @@
       var opt = document.createElement("option");
       opt.value = ep.id;
       opt.textContent = capitalize(ep.region) + " — " + fmtDateTime(Date.parse(ep.episode_start)) +
-        " to " + fmtDateTime(Date.parse(ep.episode_end)) + " (peak PSI " + Math.round(ep.peak_psi) + ")";
+        " to " + fmtDateTime(Date.parse(ep.episode_end)) + " (" + ep.duration_hours + "h above PSI " +
+        estate.data.threshold + ", peak " + Math.round(ep.peak_psi) + ")";
       els.selectEpi.appendChild(opt);
     });
   }
@@ -997,6 +998,7 @@
     els.metaEpi.innerHTML = "<strong>" + capitalize(ep.region) + "</strong> &middot; episode " +
       fmtDateTime(Date.parse(ep.episode_start)) + " to " +
       fmtDateTime(Date.parse(ep.episode_end)) +
+      " &middot; " + ep.duration_hours + "h above PSI " + estate.data.threshold +
       " &middot; peak PSI " + Math.round(ep.peak_psi) + " at " + fmtDateTime(Date.parse(ep.peak_time)) +
       " &middot; chart padded " + estate.data.buffer_hours + "h before/after";
 

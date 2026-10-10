@@ -49,7 +49,9 @@ def load_all_rows(path: str) -> dict[str, list[dict]]:
 def find_episodes(rows: list[dict]) -> list[dict]:
     """Contiguous runs of psi_twenty_four_hourly > PSI_EPISODE_THRESHOLD, in
     chronological order. A gap (missing/None reading, or a reading back at
-    or below the threshold) ends the current run."""
+    or below the threshold) ends the current run. "count" is the number of
+    hourly readings in the run -- the data is sampled hourly, so this is
+    also the number of hours the region spent above the threshold."""
     episodes: list[dict] = []
     current: dict | None = None
     for r in rows:
@@ -57,9 +59,10 @@ def find_episodes(rows: list[dict]) -> list[dict]:
         if psi is not None and psi > PSI_EPISODE_THRESHOLD:
             ts = parse_ts(r["timestamp"])
             if current is None:
-                current = {"start": ts, "end": ts, "peak_psi": psi, "peak_time": ts}
+                current = {"start": ts, "end": ts, "peak_psi": psi, "peak_time": ts, "count": 1}
             else:
                 current["end"] = ts
+                current["count"] += 1
                 if psi > current["peak_psi"]:
                     current["peak_psi"] = psi
                     current["peak_time"] = ts
@@ -87,6 +90,7 @@ def build_episode_payload(region: str, episode: dict, rows: list[dict]) -> dict:
         "region": region,
         "episode_start": episode["start"].isoformat(),
         "episode_end": episode["end"].isoformat(),
+        "duration_hours": episode["count"],
         "peak_psi": round(episode["peak_psi"], 1),
         "peak_time": episode["peak_time"].isoformat(),
         "window_start": window_start.isoformat(),
