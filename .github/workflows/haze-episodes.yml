@@ -1,0 +1,77 @@
+name: Singapore Haze Episodes
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "Backfill from this date (YYYY-MM-DD). Leave blank for August 1 of the current year."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: haze-episodes
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # continue-on-error so a crash here (or in the build step below) never
+      # skips the commit step and discards whatever was fetched/built
+      # earlier in this same run -- same reasoning as haze-dashboard.yml.
+      - name: Backfill PM2.5 + PSI data since August
+        id: fetch_episodes
+        continue-on-error: true
+        run: |
+          if [ -n "${{ github.event.inputs.start_date }}" ]; then
+            python scripts/fetch_episodes_data.py --start-date "${{ github.event.inputs.start_date }}"
+          else
+            python scripts/fetch_episodes_data.py
+          fi
+
+      - name: Find episodes + build docs/episodes/data.json + index.html
+        id: build_episodes
+        continue-on-error: true
+        run: python scripts/build_episodes_page.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for f in data/episodes_history.csv docs/episodes/index.html docs/episodes/data.json docs/episodes/.nojekyll; do
+            [ -e "$f" ] && git add "$f"
+          done
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Update haze episodes data [skip ci]"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          for i in 1 2 3 4; do
+            git push origin "HEAD:${GITHUB_REF_NAME}" && break
+            echo "Push failed, retrying ($i)..."
+            sleep $((i * 3))
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+          done
+
+      - name: Fail job if the fetch or build step failed
+        if: steps.fetch_episodes.outcome == 'failure' || steps.build_episodes.outcome == 'failure'
+        run: |
+          echo "The fetch and/or build step failed; whatever data existed was still committed above. See that step's log."
+          exit 1
