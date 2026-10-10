@@ -45,7 +45,7 @@ jobs:
             python scripts/fetch_episodes_data.py
           fi
 
-      - name: Find episodes + build docs/episodes/data.json + index.html
+      - name: Find episodes + build docs/episodes/data.json
         id: build_episodes
         continue-on-error: true
         run: python scripts/build_episodes_page.py
@@ -54,7 +54,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          for f in data/episodes_history.csv docs/episodes/index.html docs/episodes/data.json docs/episodes/.nojekyll; do
+          for f in data/episodes_history.csv docs/episodes/data.json; do
             [ -e "$f" ] && git add "$f"
           done
           if git diff --cached --quiet; then

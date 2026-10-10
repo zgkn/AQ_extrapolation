@@ -5,6 +5,13 @@ real reporting regions (north/south/east/west/central), with a flat-PM2.5
 projection on the PSI panel extrapolating toward the 100/150/200/250
 thresholds).
 
+The page has two tabs: "Live dashboard" (built from docs/data.json, written
+by this script) and "Past episodes" (built from docs/episodes/data.json,
+written by scripts/build_episodes_page.py from a separate, independently
+scheduled pipeline -- see fetch_episodes_data.py/build_episodes_page.py/
+.github/workflows/haze-episodes.yml). The episodes tab's data is fetched
+lazily, the first time that tab is opened.
+
 Two stacked single-axis panels (PM2.5, then PSI) -- never one dual-axis
 plot, which would invent a correlation between two differently-scaled
 series. Each region gets a fixed categorical color (a validated
@@ -134,6 +141,7 @@ INDEX_HTML = r"""<!doctype html>
     --faint: #898781;
     --grid: #e1e0d9;
     --border: rgba(11,11,11,0.10);
+    --band: rgba(235,104,52,0.08);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -145,6 +153,7 @@ INDEX_HTML = r"""<!doctype html>
       --faint: #898781;
       --grid: #2c2c2a;
       --border: rgba(255,255,255,0.10);
+      --band: rgba(235,104,52,0.14);
     }
   }
   * { box-sizing: border-box; }
@@ -172,6 +181,19 @@ INDEX_HTML = r"""<!doctype html>
     color: var(--ink);
     cursor: pointer;
   }
+  .tabs { display: flex; gap: 4px; margin: 10px 0 14px; border-bottom: 1px solid var(--border); }
+  .tab-btn {
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 8px 14px;
+    border: none;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tab-btn.active { color: var(--ink); font-weight: 600; border-bottom-color: var(--ink); }
   .toolbar {
     display: flex;
     align-items: center;
@@ -201,6 +223,21 @@ INDEX_HTML = r"""<!doctype html>
   }
   .legend .key { display: inline-flex; align-items: center; gap: 5px; }
   .legend .swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  .picker-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 4px 0 10px; }
+  .picker-row label { font-size: 0.82rem; color: var(--muted); }
+  select#episode-select {
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--ink);
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .episode-meta { font-size: 0.82rem; color: var(--muted); margin: 4px 0 10px; line-height: 1.5; }
+  .episode-meta strong { color: var(--ink); }
   .chart-card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -257,8 +294,6 @@ INDEX_HTML = r"""<!doctype html>
   table.data-table thead th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font-variant-numeric: normal; }
   footer { margin-top: 16px; font-size: 0.78rem; color: var(--muted); line-height: 1.5; }
   .empty-state { color: var(--muted); font-size: 0.9rem; padding: 24px 0; text-align: center; }
-  .other-link { font-size: 0.82rem; margin: 0 0 12px; }
-  .other-link a { color: var(--ink); }
 </style>
 </head>
 <body>
@@ -270,53 +305,93 @@ INDEX_HTML = r"""<!doctype html>
     </div>
     <button class="refresh-btn" id="refresh-page" type="button" title="Reload the page to fetch the latest data">&#8635; Refresh</button>
   </header>
-  <p class="other-link"><a href="episodes/index.html">View past haze episodes (PSI &gt; 100) &rarr;</a></p>
 
-  <div class="toolbar">
-    <span>Drag to pan &middot; scroll or pinch to zoom &middot; tap a point for readings</span>
-    <button id="reset-view" type="button">Reset view</button>
+  <div class="tabs" role="tablist">
+    <button class="tab-btn active" id="tab-btn-live" type="button" role="tab" aria-selected="true">Live dashboard</button>
+    <button class="tab-btn" id="tab-btn-episodes" type="button" role="tab" aria-selected="false">Past episodes</button>
   </div>
 
-  <div class="legend" id="legend"></div>
-
-  <div class="chart-card">
-    <div class="panel-title">PM2.5 (&micro;g/m&sup3;, 1-hr) &mdash; grey lines mark the level that would push 24-hr PSI to 100/150/200/250</div>
-    <svg class="chart" id="chart-pm25"></svg>
-    <div class="panel-title">PSI (24-hr) &mdash; solid = actual, dashed = projected (flat 1-hr PM2.5 held constant)</div>
-    <svg class="chart" id="chart-psi"></svg>
-  </div>
-
-  <div class="chart-card status-card">
-    <div class="panel-title">Threshold status &mdash; projected over the next 24h</div>
-    <div class="table-wrap">
-      <table class="data-table" id="status-table">
-        <thead>
-          <tr><th>Region</th><th>PSI now</th><th>&rarr; 100</th><th>&rarr; 150</th><th>&rarr; 200</th><th>&rarr; 250</th></tr>
-        </thead>
-        <tbody id="status-table-body"></tbody>
-      </table>
+  <div id="tab-panel-live">
+    <div class="toolbar">
+      <span>Drag to pan &middot; scroll or pinch to zoom &middot; tap a point for readings</span>
+      <button id="reset-view" type="button">Reset view</button>
     </div>
-    <p class="status-note">&ndash; means not on track to cross that threshold within 24h at today's current 1-hr reading (see the dashed PSI projection above for the trend); N/A means the current PSI is already at or above it.</p>
+
+    <div class="legend" id="legend"></div>
+
+    <div class="chart-card">
+      <div class="panel-title">PM2.5 (&micro;g/m&sup3;, 1-hr) &mdash; grey lines mark the level that would push 24-hr PSI to 100/150/200/250</div>
+      <svg class="chart" id="chart-pm25"></svg>
+      <div class="panel-title">PSI (24-hr) &mdash; solid = actual, dashed = projected (flat 1-hr PM2.5 held constant)</div>
+      <svg class="chart" id="chart-psi"></svg>
+    </div>
+
+    <div class="chart-card status-card">
+      <div class="panel-title">Threshold status &mdash; projected over the next 24h</div>
+      <div class="table-wrap">
+        <table class="data-table" id="status-table">
+          <thead>
+            <tr><th>Region</th><th>PSI now</th><th>&rarr; 100</th><th>&rarr; 150</th><th>&rarr; 200</th><th>&rarr; 250</th></tr>
+          </thead>
+          <tbody id="status-table-body"></tbody>
+        </table>
+      </div>
+      <p class="status-note">&ndash; means not on track to cross that threshold within 24h at today's current 1-hr reading (see the dashed PSI projection above for the trend); N/A means the current PSI is already at or above it.</p>
+    </div>
+
+    <div class="table-section">
+      <button id="toggle-table" type="button">View data table</button>
+      <div class="table-wrap" id="table-wrap" hidden>
+        <table class="data-table" id="data-table">
+          <thead>
+            <tr><th>Time (SGT)</th><th>Region</th><th>PSI</th><th>PM2.5 1h</th><th>PM2.5 24h</th><th>Source</th></tr>
+          </thead>
+          <tbody id="data-table-body"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
-  <div class="table-section">
-    <button id="toggle-table" type="button">View data table</button>
-    <div class="table-wrap" id="table-wrap" hidden>
-      <table class="data-table" id="data-table">
-        <thead>
-          <tr><th>Time (SGT)</th><th>Region</th><th>PSI</th><th>PM2.5 1h</th><th>PM2.5 24h</th><th>Source</th></tr>
-        </thead>
-        <tbody id="data-table-body"></tbody>
-      </table>
+  <div id="tab-panel-episodes" hidden>
+    <p class="subtitle" id="subtitle-epi">Loading&hellip;</p>
+
+    <div class="picker-row">
+      <label for="episode-select">Episode</label>
+      <select id="episode-select"></select>
+    </div>
+    <p class="episode-meta" id="episode-meta"></p>
+
+    <div class="toolbar">
+      <span>Drag to pan &middot; scroll or pinch to zoom &middot; tap a point for readings</span>
+      <button id="reset-view-epi" type="button">Reset view</button>
+    </div>
+
+    <div class="chart-card" id="chart-card-epi">
+      <div class="panel-title">PM2.5 (&micro;g/m&sup3;, 1-hr)</div>
+      <svg class="chart" id="chart-pm25-epi"></svg>
+      <div class="panel-title">PSI (24-hr) &mdash; shaded band marks the episode itself (above the threshold)</div>
+      <svg class="chart" id="chart-psi-epi"></svg>
+    </div>
+
+    <div class="table-section">
+      <button id="toggle-table-epi" type="button">View data table</button>
+      <div class="table-wrap" id="table-wrap-epi" hidden>
+        <table class="data-table" id="data-table-epi">
+          <thead><tr><th>Time (SGT)</th><th>PSI</th><th>PM2.5 1h</th></tr></thead>
+          <tbody id="data-table-body-epi"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
   <footer>
     Model note: PSI here tracks only the PM2.5 sub-index (real PSI = max of six pollutant
     sub-indices: PM2.5, PM10, SO2, CO, O3, NO2), so on a day another pollutant dominates the
-    real PSI can read higher than shown here. The dashed projection assumes each region's
-    latest 1-hr PM2.5 reading holds perfectly flat for up to 24h -- a simplification for a
-    quick "if nothing changes" read, not a forecast. Data: data.gov.sg.
+    real PSI can read higher than shown here. The dashed projection on the Live dashboard tab
+    assumes each region's latest 1-hr PM2.5 reading holds perfectly flat for up to 24h -- a
+    simplification for a quick "if nothing changes" read, not a forecast. An episode (Past
+    episodes tab) is a contiguous stretch where a region's 24-hr PSI was above the threshold
+    shown there; each chart pads 24h before/after for context. Data: data.gov.sg.
   </footer>
 </main>
 
@@ -326,6 +401,10 @@ INDEX_HTML = r"""<!doctype html>
 (function () {
   "use strict";
 
+  // ---------------------------------------------------------------------
+  // Shared constants + stateless helpers -- used by both the live
+  // dashboard tab ("state") and the past-episodes tab ("estate").
+  // ---------------------------------------------------------------------
   var SG_TZ = "Asia/Singapore";
   var SG_OFFSET_MS = 8 * 3600 * 1000;
   var THRESHOLDS = [100, 150, 200, 250];
@@ -334,106 +413,20 @@ INDEX_HTML = r"""<!doctype html>
   var H_PM25 = 220, H_PSI = 250;
   var MIN_SPAN_MS = 3 * 3600 * 1000; // can't zoom in tighter than 3h
   var TAP_MAX_MOVE_PX = 8; // pointerdown->up movement under this counts as a tap, not a drag
-  // The chart retains/can show up to HISTORY_WINDOW_HOURS (60 days, see
-  // aq_lib.py) of history, but starting zoomed out that far makes the
-  // initial view cluttered and hard to read. Default (and "Reset view")
-  // to the most recent 48h instead -- the full range is still just a
-  // pan/zoom away.
+  var ONE_DAY_MS = 24 * 3600 * 1000;
+  var MAX_MARKER_POINTS = 60; // per line, within the current view -- above this, dots would just be a smear
+  // The live dashboard retains/can show up to HISTORY_WINDOW_HOURS (60
+  // days, see aq_lib.py) of history, but starting zoomed out that far
+  // makes the initial view cluttered and hard to read. Default (and
+  // "Reset view") to the most recent 48h instead -- the full range is
+  // still just a pan/zoom away.
   var DEFAULT_VIEW_MS = 48 * 3600 * 1000;
+  var MIN_PX_PER_TICK = 65;
+  var STEP_CANDIDATES_MS = [15, 30, 60, 120, 180, 360, 720, 1440, 2880, 4320, 10080, 20160, 43200, 86400]
+    .map(function (m) { return m * 60 * 1000; });
 
-  var state = {
-    data: null,
-    fullDomain: null,   // [minMs, maxMs] across all real data
-    viewDomain: null,   // currently visible [minMs, maxMs], within fullDomain
-    pm25YDomain: null,
-    psiYDomain: null,
-    panels: [],         // {svg, g, gridGroup, plot, chromeGroup, innerW, innerH, isPsi}
-    width: 860,
-    pinned: false,      // true once a tap/click has pinned the readings tooltip in place
-  };
   var els = {};
-
-  document.addEventListener("DOMContentLoaded", init);
-
-  function init() {
-    els.subtitle = document.getElementById("subtitle");
-    els.legend = document.getElementById("legend");
-    els.tooltip = document.getElementById("tooltip");
-    els.resetBtn = document.getElementById("reset-view");
-    els.refreshBtn = document.getElementById("refresh-page");
-    els.toggleTableBtn = document.getElementById("toggle-table");
-    els.tableWrap = document.getElementById("table-wrap");
-    els.tableBody = document.getElementById("data-table-body");
-    els.statusTableBody = document.getElementById("status-table-body");
-
-    els.refreshBtn.addEventListener("click", function () {
-      location.reload();
-    });
-    els.toggleTableBtn.addEventListener("click", function () {
-      var hidden = els.tableWrap.hidden;
-      els.tableWrap.hidden = !hidden;
-      els.toggleTableBtn.textContent = hidden ? "Hide data table" : "View data table";
-    });
-    els.resetBtn.addEventListener("click", function () {
-      state.viewDomain = defaultViewDomain();
-      state.pinned = false;
-      els.tooltip.hidden = true;
-      renderAll();
-    });
-    window.addEventListener("resize", debounce(function () {
-      measureWidth();
-      renderAll();
-    }, 150));
-    // Tapping/clicking outside the chart dismisses a pinned tooltip. Inside
-    // the chart-card, each panel's own pointerdown/up handlers below decide
-    // whether it was a tap (pins a new point) or a drag (leaves it alone).
-    document.addEventListener("pointerdown", function (evt) {
-      if (!state.pinned) return;
-      if (evt.target.closest && evt.target.closest(".chart-card")) return;
-      state.pinned = false;
-      els.tooltip.hidden = true;
-      state.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
-    });
-
-    fetch("data.json", { cache: "no-store" })
-      .then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.json();
-      })
-      .then(function (data) {
-        state.data = data;
-        var allT = [];
-        Object.keys(data.regions).forEach(function (region) {
-          var p = data.regions[region];
-          p.history.forEach(function (h) { allT.push(Date.parse(h.t)); });
-          p.projection.forEach(function (pt) { allT.push(Date.parse(pt.t)); });
-        });
-        if (!allT.length) throw new Error("no data points in data.json");
-        state.fullDomain = [Math.min.apply(null, allT), Math.max.apply(null, allT)];
-        state.viewDomain = defaultViewDomain();
-        computeYDomains();
-
-        var asOfMs = Math.max.apply(null, Object.keys(data.regions).map(function (r) {
-          return Date.parse(data.regions[r].as_of);
-        }));
-        els.subtitle.textContent = "Latest reading: " + fmtSGT(asOfMs, { year: "numeric", month: "short", day: "2-digit" }) + " SGT";
-
-        buildLegend(data.colors);
-        buildStatusTable(data);
-        buildTable(data);
-        measureWidth();
-        buildPanel("chart-pm25", false);
-        buildPanel("chart-psi", true);
-        renderAll();
-      })
-      .catch(function (err) {
-        els.subtitle.textContent = "Failed to load data.json";
-        var p = document.createElement("p");
-        p.className = "empty-state";
-        p.textContent = "Could not load dashboard data (" + err.message + "). This page needs to be served over http(s), not opened as a local file.";
-        document.querySelector(".chart-card").replaceWith(p);
-      });
-  }
+  var activeTab = "live";
 
   function debounce(fn, ms) {
     var t;
@@ -442,11 +435,6 @@ INDEX_HTML = r"""<!doctype html>
       var args = arguments;
       t = setTimeout(function () { fn.apply(null, args); }, ms);
     };
-  }
-
-  function measureWidth() {
-    var card = document.querySelector(".chart-card");
-    state.width = Math.max(280, card.clientWidth - 24);
   }
 
   function fmtSGT(ms, opts) {
@@ -464,6 +452,8 @@ INDEX_HTML = r"""<!doctype html>
       timeZone: SG_TZ, year: "numeric", month: "2-digit", day: "2-digit"
     }).format(new Date(ms));
   }
+
+  function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
   function niceTicks(min, max, count) {
     if (min === max) { min -= 1; max += 1; }
@@ -483,13 +473,8 @@ INDEX_HTML = r"""<!doctype html>
   // (narrow mobile screens need fewer ticks or "Sat 12:00"-style labels
   // collide into illegible mush) -- aligned to nice SGT-hour boundaries
   // (not UTC/epoch ones -- otherwise ticks land on odd times). Extends up
-  // to a 60-day step so a fully-zoomed-out view (now up to 60 days of
-  // history) doesn't fall through to the old 2-day max and pack in far more
-  // ticks than maxTicks allows.
-  var MIN_PX_PER_TICK = 65;
-  var STEP_CANDIDATES_MS = [15, 30, 60, 120, 180, 360, 720, 1440, 2880, 4320, 10080, 20160, 43200, 86400]
-    .map(function (m) { return m * 60 * 1000; });
-  var ONE_DAY_MS = 24 * 3600 * 1000;
+  // to a 60-day step so a fully-zoomed-out live view (up to 60 days of
+  // history) doesn't pack in far more ticks than maxTicks allows.
   function timeTicks(domain, innerW) {
     var span = domain[1] - domain[0];
     var maxTicks = Math.max(2, Math.floor(innerW / MIN_PX_PER_TICK));
@@ -528,25 +513,78 @@ INDEX_HTML = r"""<!doctype html>
     return d.trim();
   }
 
-  var MAX_MARKER_POINTS = 60; // per region/line, within the current view -- above this, dots would just be a smear
-
-  function countInView(points, xField) {
-    var lo = state.viewDomain[0], hi = state.viewDomain[1], n = 0;
-    for (var i = 0; i < points.length; i++) {
-      var t = points[i][xField];
-      if (t >= lo && t <= hi) n++;
-    }
-    return n;
-  }
-
   function drawMarkers(container, points, x, y, xField, yField, color, opacity) {
+    var op = opacity === undefined ? 1 : opacity;
     points.forEach(function (p) {
       var v = p[yField];
       if (v === null || v === undefined) return;
       container.appendChild(svgEl("circle", {
-        cx: x(p[xField]).toFixed(1), cy: y(v).toFixed(1), r: 2.5, fill: color, opacity: opacity
+        cx: x(p[xField]).toFixed(1), cy: y(v).toFixed(1), r: 2.5, fill: color, opacity: op
       }));
     });
+  }
+
+  function appendCell(tr, text, className) {
+    var td = document.createElement("td");
+    td.textContent = text;
+    if (className) td.className = className;
+    tr.appendChild(td);
+  }
+
+  function panelHeight(isPsi) { return isPsi ? H_PSI : H_PM25; }
+  function panelInnerH(isPsi) {
+    return panelHeight(isPsi) - MARGIN.top - MARGIN.bottom - (isPsi ? BOTTOM_AXIS_H : 0);
+  }
+
+  function buildPanelGeneric(id, isPsi, panelsArray, attachFn) {
+    var svg = document.getElementById(id);
+    var g = svgEl("g");
+    svg.appendChild(g);
+
+    var clipId = id + "-clip";
+    var defs = svgEl("defs");
+    var clipRect = svgEl("rect");
+    var clipPath = svgEl("clipPath", { id: clipId });
+    clipPath.appendChild(clipRect);
+    defs.appendChild(clipPath);
+    svg.appendChild(defs);
+
+    // Fixed draw order so a full rebuild each render never needs fragile
+    // child-index bookkeeping: grid (bottom) -> plot (clipped, middle) ->
+    // chrome (ticks/labels/crosshair, top).
+    var gridGroup = svgEl("g");
+    var plot = svgEl("g", { "clip-path": "url(#" + clipId + ")" });
+    var chromeGroup = svgEl("g");
+    g.appendChild(gridGroup);
+    g.appendChild(plot);
+    g.appendChild(chromeGroup);
+
+    var panel = {
+      svg: svg, g: g, gridGroup: gridGroup, plot: plot, chromeGroup: chromeGroup,
+      clipRect: clipRect, isPsi: isPsi, id: id
+    };
+    panelsArray.push(panel);
+    attachFn(panel);
+    return panel;
+  }
+
+  // ---------------------------------------------------------------------
+  // Live dashboard tab
+  // ---------------------------------------------------------------------
+  var state = {
+    data: null,
+    fullDomain: null,   // [minMs, maxMs] across all real data
+    viewDomain: null,   // currently visible [minMs, maxMs], within fullDomain
+    pm25YDomain: null,
+    psiYDomain: null,
+    panels: [],         // {svg, g, gridGroup, plot, chromeGroup, innerW, innerH, isPsi}
+    width: 860,
+    pinned: false,      // true once a tap/click has pinned the readings tooltip in place
+  };
+
+  function measureWidth() {
+    var card = document.querySelector("#tab-panel-live .chart-card");
+    state.width = Math.max(280, card.clientWidth - 24);
   }
 
   function buildLegend(colors) {
@@ -558,7 +596,7 @@ INDEX_HTML = r"""<!doctype html>
       sw.className = "swatch";
       sw.style.background = colors[region];
       var label = document.createElement("span");
-      label.textContent = region.charAt(0).toUpperCase() + region.slice(1);
+      label.textContent = capitalize(region);
       span.appendChild(sw);
       span.appendChild(label);
       els.legend.appendChild(span);
@@ -587,42 +625,7 @@ INDEX_HTML = r"""<!doctype html>
     state.psiYDomain = [psiTicks[0], psiTicks[psiTicks.length - 1]];
   }
 
-  function panelHeight(isPsi) { return isPsi ? H_PSI : H_PM25; }
-  function panelInnerH(isPsi) {
-    return panelHeight(isPsi) - MARGIN.top - MARGIN.bottom - (isPsi ? BOTTOM_AXIS_H : 0);
-  }
-
-  function buildPanel(id, isPsi) {
-    var svg = document.getElementById(id);
-    var g = svgEl("g");
-    svg.appendChild(g);
-
-    var clipId = id + "-clip";
-    var defs = svgEl("defs");
-    var clipRect = svgEl("rect");
-    var clipPath = svgEl("clipPath", { id: clipId });
-    clipPath.appendChild(clipRect);
-    defs.appendChild(clipPath);
-    svg.appendChild(defs);
-
-    // Fixed draw order so a full rebuild each render never needs fragile
-    // child-index bookkeeping: grid (bottom) -> plot (clipped, middle) ->
-    // chrome (ticks/labels/crosshair, top).
-    var gridGroup = svgEl("g");
-    var plot = svgEl("g", { "clip-path": "url(#" + clipId + ")" });
-    var chromeGroup = svgEl("g");
-    g.appendChild(gridGroup);
-    g.appendChild(plot);
-    g.appendChild(chromeGroup);
-
-    var panel = {
-      svg: svg, g: g, gridGroup: gridGroup, plot: plot, chromeGroup: chromeGroup,
-      clipRect: clipRect, isPsi: isPsi, id: id
-    };
-    state.panels.push(panel);
-    attachInteraction(panel);
-    return panel;
-  }
+  function buildPanel(id, isPsi) { return buildPanelGeneric(id, isPsi, state.panels, attachInteraction); }
 
   function renderAll() {
     if (!state.data) return;
@@ -713,11 +716,10 @@ INDEX_HTML = r"""<!doctype html>
 
       // Scatter markers on top of the line -- but only once a point's
       // neighbors are far enough apart to read as points rather than a
-      // solid smear. 5 regions x a week of hourly data is ~170 points/line
-      // fully zoomed out; drawing markers for all of that would just be
-      // clutter, so gate on the *visible* (in the current pan/zoom) point
-      // count, not the dataset size, so markers appear naturally once
-      // you've zoomed in far enough for them to be legible.
+      // solid smear. 5 regions x many days of hourly data is a lot of
+      // points fully zoomed out; drawing markers for all of that would
+      // just be clutter, so gate on the *visible* (in the current
+      // pan/zoom) point count, not the dataset size.
       if (countInView(hist, "t") <= MAX_MARKER_POINTS) {
         drawMarkers(panel.plot, hist, x, y, "t", field, color, 1);
       }
@@ -738,6 +740,15 @@ INDEX_HTML = r"""<!doctype html>
     var crosshair = svgEl("line", { x1: -10, x2: -10, y1: 0, y2: innerH, stroke: "var(--faint)", "stroke-width": 1, visibility: "hidden" });
     panel.chromeGroup.appendChild(crosshair);
     panel.crosshair = crosshair;
+  }
+
+  function countInView(points, xField) {
+    var lo = state.viewDomain[0], hi = state.viewDomain[1], n = 0;
+    for (var i = 0; i < points.length; i++) {
+      var t = points[i][xField];
+      if (t >= lo && t <= hi) n++;
+    }
+    return n;
   }
 
   function defaultViewDomain() {
@@ -952,7 +963,7 @@ INDEX_HTML = r"""<!doctype html>
     var k0 = document.createElement("span"); k0.className = "k"; k0.textContent = "Time";
     var tMs0 = Date.parse(rows[0].row.t);
     // Include the date, not just weekday+time -- with up to 60 days of
-    // history now, "Wed 21:00" alone doesn't say *which* Wednesday.
+    // history, "Wed 21:00" alone doesn't say *which* Wednesday.
     var v0 = document.createElement("span"); v0.className = "v"; v0.textContent = fmtAxisDate(tMs0) + " " + fmtSGT(tMs0, { weekday: undefined });
     timeRow.appendChild(k0); timeRow.appendChild(v0);
     els.tooltip.appendChild(timeRow);
@@ -963,7 +974,7 @@ INDEX_HTML = r"""<!doctype html>
       var k = document.createElement("span");
       k.className = "k";
       k.style.color = state.data.colors[r.region];
-      k.textContent = r.region.charAt(0).toUpperCase() + r.region.slice(1) + (r.projected ? " (proj.)" : "");
+      k.textContent = capitalize(r.region) + (r.projected ? " (proj.)" : "");
       var v = document.createElement("span");
       v.className = "v";
       var psi = r.row.psi === null || r.row.psi === undefined ? "–" : Math.round(r.row.psi);
@@ -998,7 +1009,7 @@ INDEX_HTML = r"""<!doctype html>
       var tr = document.createElement("tr");
 
       var regionCell = document.createElement("td");
-      regionCell.textContent = region.charAt(0).toUpperCase() + region.slice(1);
+      regionCell.textContent = capitalize(region);
       regionCell.style.color = colors[region];
       regionCell.style.fontWeight = "600";
       tr.appendChild(regionCell);
@@ -1041,7 +1052,7 @@ INDEX_HTML = r"""<!doctype html>
     rows.forEach(function (r) {
       var tr = document.createElement("tr");
       appendCell(tr, fmtSGT(r.t, { year: "numeric", month: "short", day: "2-digit" }));
-      appendCell(tr, r.region.charAt(0).toUpperCase() + r.region.slice(1));
+      appendCell(tr, capitalize(r.region));
       appendCell(tr, r.row.psi === null ? "–" : Math.round(r.row.psi));
       appendCell(tr, r.row.pm25_1h === null ? "–" : r.row.pm25_1h.toFixed(1));
       appendCell(tr, r.row.pm25_24h === null ? "–" : r.row.pm25_24h.toFixed(1));
@@ -1050,11 +1061,555 @@ INDEX_HTML = r"""<!doctype html>
     });
   }
 
-  function appendCell(tr, text, className) {
-    var td = document.createElement("td");
-    td.textContent = text;
-    if (className) td.className = className;
-    tr.appendChild(td);
+  // ---------------------------------------------------------------------
+  // Past-episodes tab -- fetches docs/episodes/data.json lazily, the
+  // first time this tab is opened (written by a separate, independently
+  // scheduled pipeline -- see build_episodes_page.py).
+  // ---------------------------------------------------------------------
+  var estate = {
+    data: null,
+    episode: null,      // the currently-selected episode object
+    fullDomain: null,
+    viewDomain: null,
+    pm25YDomain: null,
+    psiYDomain: null,
+    panels: [],
+    width: 860,
+    pinned: false,
+    initialized: false, // true once the first fetch of episodes/data.json has been kicked off
+  };
+
+  function epiMeasureWidth() {
+    var card = document.getElementById("chart-card-epi");
+    if (!card) return;
+    estate.width = Math.max(280, card.clientWidth - 24);
+  }
+
+  function epiBuildSelect(episodes) {
+    els.selectEpi.innerHTML = "";
+    episodes.forEach(function (ep) {
+      var opt = document.createElement("option");
+      opt.value = ep.id;
+      opt.textContent = capitalize(ep.region) + " — " + fmtSGT(Date.parse(ep.episode_start)) +
+        " to " + fmtSGT(Date.parse(ep.episode_end)) + " (peak PSI " + Math.round(ep.peak_psi) + ")";
+      els.selectEpi.appendChild(opt);
+    });
+  }
+
+  function epiSelectEpisode(id) {
+    var ep = null;
+    for (var i = 0; i < estate.data.episodes.length; i++) {
+      if (estate.data.episodes[i].id === id) { ep = estate.data.episodes[i]; break; }
+    }
+    if (!ep) return;
+    els.selectEpi.value = id;
+    estate.episode = ep;
+    estate.pinned = false;
+    els.tooltip.hidden = true;
+
+    var allT = ep.series.map(function (pt) { return Date.parse(pt.t); });
+    estate.fullDomain = [Math.min.apply(null, allT), Math.max.apply(null, allT)];
+    estate.viewDomain = estate.fullDomain.slice();
+    epiComputeYDomains(ep);
+
+    els.metaEpi.innerHTML = "<strong>" + capitalize(ep.region) + "</strong> &middot; episode " +
+      fmtSGT(Date.parse(ep.episode_start), { year: "numeric", month: "short", day: "2-digit" }) + " to " +
+      fmtSGT(Date.parse(ep.episode_end), { year: "numeric", month: "short", day: "2-digit" }) +
+      " &middot; peak PSI " + Math.round(ep.peak_psi) + " at " + fmtSGT(Date.parse(ep.peak_time)) +
+      " &middot; chart padded " + estate.data.buffer_hours + "h before/after";
+
+    epiBuildTable(ep);
+    epiRenderAll();
+  }
+
+  function epiComputeYDomains(ep) {
+    var pm25Vals = [0], psiVals = [0, estate.data.threshold];
+    ep.series.forEach(function (pt) {
+      if (pt.pm25_1h !== null) pm25Vals.push(pt.pm25_1h);
+      if (pt.psi !== null) psiVals.push(pt.psi);
+    });
+    var pm25Ticks = niceTicks(Math.min.apply(null, pm25Vals), Math.max.apply(null, pm25Vals), 4);
+    var psiTicks = niceTicks(Math.min.apply(null, psiVals), Math.max.apply(null, psiVals), 4);
+    estate.pm25YDomain = [pm25Ticks[0], pm25Ticks[pm25Ticks.length - 1]];
+    estate.psiYDomain = [psiTicks[0], psiTicks[psiTicks.length - 1]];
+  }
+
+  function epiBuildPanel(id, isPsi) { return buildPanelGeneric(id, isPsi, estate.panels, epiAttachInteraction); }
+
+  function epiRenderAll() {
+    if (!estate.episode) return;
+    estate.panels.forEach(epiRenderPanel);
+  }
+
+  function epiRenderPanel(panel) {
+    var W = estate.width, H = panelHeight(panel.isPsi);
+    var innerW = W - MARGIN.left - MARGIN.right;
+    var innerH = panelInnerH(panel.isPsi);
+
+    panel.svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    panel.svg.setAttribute("width", W);
+    panel.svg.setAttribute("height", H);
+    panel.g.setAttribute("transform", "translate(" + MARGIN.left + "," + MARGIN.top + ")");
+    panel.clipRect.setAttribute("x", -2);
+    panel.clipRect.setAttribute("y", -2);
+    panel.clipRect.setAttribute("width", innerW + 4);
+    panel.clipRect.setAttribute("height", innerH + 4);
+
+    panel.gridGroup.innerHTML = "";
+    panel.plot.innerHTML = "";
+    panel.chromeGroup.innerHTML = "";
+
+    var x = scaleLinear(estate.viewDomain, [0, innerW]);
+    var yDomain = panel.isPsi ? estate.psiYDomain : estate.pm25YDomain;
+    var y = scaleLinear(yDomain, [innerH, 0]);
+    panel.x = x; panel.y = y; panel.innerW = innerW; panel.innerH = innerH;
+
+    var yTicks = niceTicks(yDomain[0], yDomain[1], 4);
+    yTicks.forEach(function (t) {
+      panel.gridGroup.appendChild(svgEl("line", { x1: 0, x2: innerW, y1: y(t), y2: y(t), stroke: "var(--grid)", "stroke-width": 1 }));
+      var lbl = svgEl("text", { class: "axis-label", x: -6, y: y(t) + 3, "text-anchor": "end" });
+      lbl.textContent = Math.round(t);
+      panel.chromeGroup.appendChild(lbl);
+    });
+
+    var timeTickInfo = timeTicks(estate.viewDomain, innerW);
+    var useDateTicks = timeTickInfo.stepMs >= ONE_DAY_MS;
+    timeTickInfo.ticks.forEach(function (t) {
+      var xp = x(t);
+      panel.gridGroup.appendChild(svgEl("line", { x1: xp, x2: xp, y1: 0, y2: innerH, stroke: "var(--grid)", "stroke-width": 1 }));
+      if (panel.isPsi) {
+        panel.chromeGroup.appendChild(svgEl("line", { x1: xp, x2: xp, y1: innerH, y2: innerH + 4, stroke: "var(--faint)", "stroke-width": 1 }));
+        var lbl = svgEl("text", { class: "axis-label", x: xp, y: innerH + 15, "text-anchor": "middle" });
+        lbl.textContent = useDateTicks ? fmtAxisDate(t) : fmtSGT(t);
+        panel.chromeGroup.appendChild(lbl);
+      }
+    });
+
+    var ep = estate.episode;
+    var color = estate.data.colors[ep.region] || "#2a78d6";
+
+    // Shade the actual episode (above-threshold) span so the buffer_hours
+    // padding on either side reads as context, not part of the episode itself.
+    var epStartX = x(Date.parse(ep.episode_start));
+    var epEndX = x(Date.parse(ep.episode_end));
+    var bandX0 = Math.max(0, Math.min(epStartX, epEndX));
+    var bandX1 = Math.min(innerW, Math.max(epStartX, epEndX));
+    if (bandX1 > bandX0) {
+      panel.plot.appendChild(svgEl("rect", { x: bandX0, y: 0, width: bandX1 - bandX0, height: innerH, fill: "var(--band)" }));
+    }
+
+    if (panel.isPsi) {
+      var th = estate.data.threshold;
+      if (th >= yDomain[0] && th <= yDomain[1]) {
+        panel.plot.appendChild(svgEl("line", { x1: 0, x2: innerW, y1: y(th), y2: y(th), stroke: "var(--faint)", "stroke-width": 1 }));
+        var thLbl = svgEl("text", { class: "threshold-label", x: innerW - 2, y: y(th) - 3, "text-anchor": "end" });
+        thLbl.textContent = "PSI " + th;
+        panel.chromeGroup.appendChild(thLbl);
+      }
+    }
+
+    var field = panel.isPsi ? "psi" : "pm25_1h";
+    var series = ep.series.map(function (pt) { return { t: Date.parse(pt.t), psi: pt.psi, pm25_1h: pt.pm25_1h }; });
+    var path = svgEl("path", { d: linePath(series, x, y, "t", field), fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" });
+    panel.plot.appendChild(path);
+    if (series.length <= 200) drawMarkers(panel.plot, series, x, y, "t", field, color);
+
+    var crosshair = svgEl("line", { x1: -10, x2: -10, y1: 0, y2: innerH, stroke: "var(--faint)", "stroke-width": 1, visibility: "hidden" });
+    panel.chromeGroup.appendChild(crosshair);
+    panel.crosshair = crosshair;
+  }
+
+  function epiClampViewDomain(domain) {
+    var full = estate.fullDomain;
+    var span = Math.min(domain[1] - domain[0], full[1] - full[0]);
+    span = Math.max(span, MIN_SPAN_MS);
+    var lo = domain[0], hi = lo + span;
+    if (lo < full[0]) { lo = full[0]; hi = lo + span; }
+    if (hi > full[1]) { hi = full[1]; lo = hi - span; }
+    return [lo, hi];
+  }
+
+  function epiLocalXFromClientX(svg, clientX) {
+    var rect = svg.getBoundingClientRect();
+    var scale = estate.width / rect.width;
+    return (clientX - rect.left) * scale - MARGIN.left;
+  }
+
+  function epiZoomAtLocalX(panel, localX, factor) {
+    var frac = Math.max(0, Math.min(1, localX / panel.innerW));
+    var cursorT = estate.viewDomain[0] + frac * (estate.viewDomain[1] - estate.viewDomain[0]);
+    var span = (estate.viewDomain[1] - estate.viewDomain[0]) * factor;
+    var lo = cursorT - frac * span, hi = lo + span;
+    estate.viewDomain = epiClampViewDomain([lo, hi]);
+    epiRenderAll();
+  }
+
+  function epiAttachInteraction(panel) {
+    var svg = panel.svg;
+    var pointers = {};
+    var dragState = null;
+    var pinchState = null;
+
+    function activeIds() { return Object.keys(pointers); }
+    function distanceBetween(idA, idB) {
+      var a = pointers[idA], b = pointers[idB];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+    function midpointX(idA, idB) { return (pointers[idA].x + pointers[idB].x) / 2; }
+
+    svg.addEventListener("pointerdown", function (evt) {
+      evt.preventDefault();
+      try { svg.setPointerCapture(evt.pointerId); } catch (e) { /* nice-to-have */ }
+      pointers[evt.pointerId] = { x: evt.clientX, y: evt.clientY };
+      var ids = activeIds();
+      if (ids.length === 2) {
+        dragState = null;
+        pinchState = { ids: ids, lastDist: distanceBetween(ids[0], ids[1]) };
+        svg.classList.remove("dragging");
+        panel.tapStart = null;
+      } else if (ids.length === 1) {
+        pinchState = null;
+        svg.classList.add("dragging");
+        dragState = { startX: evt.clientX, startDomain: estate.viewDomain.slice() };
+        panel.tapStart = { x: evt.clientX, y: evt.clientY };
+      }
+    });
+
+    svg.addEventListener("pointermove", function (evt) {
+      if (!(evt.pointerId in pointers)) { epiHandleHover(panel, evt); return; }
+      pointers[evt.pointerId] = { x: evt.clientX, y: evt.clientY };
+      if (panel.tapStart && Math.hypot(evt.clientX - panel.tapStart.x, evt.clientY - panel.tapStart.y) > TAP_MAX_MOVE_PX) {
+        panel.tapStart = null;
+      }
+      if (pinchState) {
+        evt.preventDefault();
+        var ids = pinchState.ids;
+        if (!(ids[0] in pointers) || !(ids[1] in pointers)) return;
+        var dist = distanceBetween(ids[0], ids[1]);
+        if (pinchState.lastDist > 0 && dist > 0) {
+          epiZoomAtLocalX(panel, epiLocalXFromClientX(svg, midpointX(ids[0], ids[1])), pinchState.lastDist / dist);
+        }
+        pinchState.lastDist = dist;
+        return;
+      }
+      if (dragState) {
+        evt.preventDefault();
+        var scale = estate.width / svg.getBoundingClientRect().width;
+        var pxPerMs = panel.innerW / (dragState.startDomain[1] - dragState.startDomain[0]);
+        var dxPx = (evt.clientX - dragState.startX) * scale;
+        var dtMs = dxPx / pxPerMs;
+        estate.viewDomain = epiClampViewDomain([dragState.startDomain[0] - dtMs, dragState.startDomain[1] - dtMs]);
+        epiRenderAll();
+        return;
+      }
+      epiHandleHover(panel, evt);
+    });
+
+    function endPointer(evt) {
+      try { svg.releasePointerCapture(evt.pointerId); } catch (e) { /* already released */ }
+      delete pointers[evt.pointerId];
+      var ids = activeIds();
+      var wasTap = evt.type === "pointerup" && !pinchState && panel.tapStart && ids.length === 0;
+      if (pinchState) {
+        if (ids.length < 2) {
+          pinchState = null;
+          if (ids.length === 1) {
+            dragState = { startX: pointers[ids[0]].x, startDomain: estate.viewDomain.slice() };
+            svg.classList.add("dragging");
+          } else {
+            svg.classList.remove("dragging");
+          }
+        }
+      } else if (dragState && ids.length === 0) {
+        dragState = null;
+        svg.classList.remove("dragging");
+      }
+      if (wasTap) {
+        panel.tapStart = null;
+        epiSelectPoint(panel, evt);
+      }
+    }
+    svg.addEventListener("pointerup", endPointer);
+    svg.addEventListener("pointercancel", endPointer);
+    svg.addEventListener("pointerleave", function () {
+      if (estate.pinned) return;
+      estate.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
+      els.tooltip.hidden = true;
+    });
+
+    svg.addEventListener("wheel", function (evt) {
+      evt.preventDefault();
+      var factor = evt.deltaY > 0 ? 1.15 : 1 / 1.15;
+      epiZoomAtLocalX(panel, epiLocalXFromClientX(svg, evt.clientX), factor);
+    }, { passive: false });
+  }
+
+  function epiHandleHover(panel, evt) {
+    if (estate.pinned) return;
+    epiShowReadingsAt(epiTMsFromClientX(panel, evt.clientX), evt);
+  }
+
+  function epiSelectPoint(panel, evt) {
+    estate.pinned = true;
+    epiShowReadingsAt(epiTMsFromClientX(panel, evt.clientX), evt);
+  }
+
+  function epiTMsFromClientX(panel, clientX) {
+    var localX = epiLocalXFromClientX(panel.svg, clientX);
+    var clampedX = Math.max(0, Math.min(panel.innerW, localX));
+    return estate.viewDomain[0] + (clampedX / panel.innerW) * (estate.viewDomain[1] - estate.viewDomain[0]);
+  }
+
+  function epiShowReadingsAt(tMs, evt) {
+    estate.panels.forEach(function (p) {
+      var cx = p.x ? p.x(tMs) : -10;
+      if (p.crosshair) {
+        p.crosshair.setAttribute("x1", cx);
+        p.crosshair.setAttribute("x2", cx);
+        p.crosshair.setAttribute("visibility", "visible");
+      }
+    });
+
+    var series = estate.episode.series;
+    var nearest = null, bestDiff = Infinity;
+    for (var i = 0; i < series.length; i++) {
+      var diff = Math.abs(Date.parse(series[i].t) - tMs);
+      if (diff < bestDiff) { bestDiff = diff; nearest = series[i]; }
+    }
+    if (!nearest) return;
+    epiShowTooltip(evt, nearest);
+  }
+
+  function epiShowTooltip(evt, row) {
+    els.tooltip.innerHTML = "";
+    var tMs = Date.parse(row.t);
+    var timeRow = document.createElement("div");
+    timeRow.className = "row";
+    var k0 = document.createElement("span"); k0.className = "k"; k0.textContent = "Time";
+    var v0 = document.createElement("span"); v0.className = "v"; v0.textContent = fmtAxisDate(tMs) + " " + fmtSGT(tMs, { weekday: undefined });
+    timeRow.appendChild(k0); timeRow.appendChild(v0);
+    els.tooltip.appendChild(timeRow);
+
+    var row2 = document.createElement("div");
+    row2.className = "row";
+    var k = document.createElement("span"); k.className = "k"; k.textContent = capitalize(estate.episode.region);
+    var v = document.createElement("span"); v.className = "v";
+    var psi = row.psi === null ? "–" : Math.round(row.psi);
+    var pm = row.pm25_1h === null ? "–" : row.pm25_1h.toFixed(1);
+    v.textContent = "PSI " + psi + " / PM " + pm;
+    row2.appendChild(k); row2.appendChild(v);
+    els.tooltip.appendChild(row2);
+
+    els.tooltip.hidden = false;
+    var left = evt.clientX + 14;
+    if (left + 220 > window.innerWidth) left = evt.clientX - 220 - 14;
+    els.tooltip.style.left = left + "px";
+    els.tooltip.style.top = (evt.clientY + 14) + "px";
+  }
+
+  function epiBuildTable(ep) {
+    var rows = ep.series.slice().sort(function (a, b) { return Date.parse(b.t) - Date.parse(a.t); });
+    els.tableBodyEpi.innerHTML = "";
+    rows.forEach(function (r) {
+      var tr = document.createElement("tr");
+      appendCell(tr, fmtSGT(Date.parse(r.t), { year: "numeric", month: "short", day: "2-digit" }));
+      appendCell(tr, r.psi === null ? "–" : Math.round(r.psi));
+      appendCell(tr, r.pm25_1h === null ? "–" : r.pm25_1h.toFixed(1));
+      els.tableBodyEpi.appendChild(tr);
+    });
+  }
+
+  function epiInit() {
+    fetch("episodes/data.json", { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        estate.data = data;
+        els.subtitleEpi.textContent = "Searched " + fmtAxisDate(Date.parse(data.search_start)) + " to " +
+          fmtAxisDate(Date.parse(data.search_end)) + " for PSI > " + data.threshold +
+          " -- " + data.episodes.length + " episode(s) found";
+
+        if (!data.episodes.length) {
+          document.querySelector("#tab-panel-episodes .picker-row").hidden = true;
+          document.querySelector("#tab-panel-episodes .toolbar").hidden = true;
+          var p = document.createElement("p");
+          p.className = "empty-state";
+          p.textContent = "No episodes found -- every region stayed at or below PSI " + data.threshold + " for the whole search window.";
+          document.getElementById("chart-card-epi").replaceWith(p);
+          document.querySelector("#tab-panel-episodes .table-section").hidden = true;
+          return;
+        }
+
+        epiBuildSelect(data.episodes);
+        epiMeasureWidth();
+        epiBuildPanel("chart-pm25-epi", false);
+        epiBuildPanel("chart-psi-epi", true);
+        epiSelectEpisode(data.episodes[0].id);
+      })
+      .catch(function (err) {
+        els.subtitleEpi.textContent = "Failed to load episode data";
+        var p = document.createElement("p");
+        p.className = "empty-state";
+        p.textContent = "Could not load episode data (" + err.message + ").";
+        var card = document.getElementById("chart-card-epi");
+        if (card) card.replaceWith(p);
+      });
+  }
+
+  // ---------------------------------------------------------------------
+  // Tabs + init
+  // ---------------------------------------------------------------------
+  function activateTab(name) {
+    if (name === activeTab) return;
+    activeTab = name;
+    var liveActive = name === "live";
+
+    // Dismiss any pinned tooltip/crosshair from the tab being left.
+    state.pinned = false;
+    estate.pinned = false;
+    els.tooltip.hidden = true;
+    state.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
+    estate.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
+
+    document.getElementById("tab-panel-live").hidden = !liveActive;
+    document.getElementById("tab-panel-episodes").hidden = liveActive;
+    els.tabBtnLive.classList.toggle("active", liveActive);
+    els.tabBtnEpi.classList.toggle("active", !liveActive);
+    els.tabBtnLive.setAttribute("aria-selected", liveActive ? "true" : "false");
+    els.tabBtnEpi.setAttribute("aria-selected", liveActive ? "false" : "true");
+
+    if (liveActive) {
+      measureWidth();
+      renderAll();
+    } else if (!estate.initialized) {
+      estate.initialized = true;
+      epiInit();
+    } else {
+      epiMeasureWidth();
+      epiRenderAll();
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
+
+  function init() {
+    els.subtitle = document.getElementById("subtitle");
+    els.legend = document.getElementById("legend");
+    els.tooltip = document.getElementById("tooltip");
+    els.resetBtn = document.getElementById("reset-view");
+    els.refreshBtn = document.getElementById("refresh-page");
+    els.toggleTableBtn = document.getElementById("toggle-table");
+    els.tableWrap = document.getElementById("table-wrap");
+    els.tableBody = document.getElementById("data-table-body");
+    els.statusTableBody = document.getElementById("status-table-body");
+    els.tabBtnLive = document.getElementById("tab-btn-live");
+    els.tabBtnEpi = document.getElementById("tab-btn-episodes");
+    els.subtitleEpi = document.getElementById("subtitle-epi");
+    els.selectEpi = document.getElementById("episode-select");
+    els.metaEpi = document.getElementById("episode-meta");
+    els.resetBtnEpi = document.getElementById("reset-view-epi");
+    els.toggleTableBtnEpi = document.getElementById("toggle-table-epi");
+    els.tableWrapEpi = document.getElementById("table-wrap-epi");
+    els.tableBodyEpi = document.getElementById("data-table-body-epi");
+
+    els.refreshBtn.addEventListener("click", function () {
+      location.reload();
+    });
+    els.toggleTableBtn.addEventListener("click", function () {
+      var hidden = els.tableWrap.hidden;
+      els.tableWrap.hidden = !hidden;
+      els.toggleTableBtn.textContent = hidden ? "Hide data table" : "View data table";
+    });
+    els.resetBtn.addEventListener("click", function () {
+      state.viewDomain = defaultViewDomain();
+      state.pinned = false;
+      els.tooltip.hidden = true;
+      renderAll();
+    });
+    els.tabBtnLive.addEventListener("click", function () { activateTab("live"); });
+    els.tabBtnEpi.addEventListener("click", function () { activateTab("episodes"); });
+    els.selectEpi.addEventListener("change", function () { epiSelectEpisode(els.selectEpi.value); });
+    els.resetBtnEpi.addEventListener("click", function () {
+      if (!estate.episode) return;
+      estate.viewDomain = estate.fullDomain.slice();
+      estate.pinned = false;
+      els.tooltip.hidden = true;
+      epiRenderAll();
+    });
+    els.toggleTableBtnEpi.addEventListener("click", function () {
+      var hidden = els.tableWrapEpi.hidden;
+      els.tableWrapEpi.hidden = !hidden;
+      els.toggleTableBtnEpi.textContent = hidden ? "Hide data table" : "View data table";
+    });
+
+    window.addEventListener("resize", debounce(function () {
+      if (activeTab === "live") {
+        measureWidth();
+        renderAll();
+      } else if (estate.initialized) {
+        epiMeasureWidth();
+        epiRenderAll();
+      }
+    }, 150));
+
+    // Tapping/clicking outside the live chart-card dismisses its pinned
+    // tooltip; each panel's own pointerdown/up handlers above decide
+    // whether a click inside counts as a tap or a drag.
+    document.addEventListener("pointerdown", function (evt) {
+      if (!state.pinned) return;
+      if (evt.target.closest && evt.target.closest("#tab-panel-live")) return;
+      state.pinned = false;
+      els.tooltip.hidden = true;
+      state.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
+    });
+    document.addEventListener("pointerdown", function (evt) {
+      if (!estate.pinned) return;
+      if (evt.target.closest && evt.target.closest("#tab-panel-episodes")) return;
+      estate.pinned = false;
+      els.tooltip.hidden = true;
+      estate.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
+    });
+
+    fetch("data.json", { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        state.data = data;
+        var allT = [];
+        Object.keys(data.regions).forEach(function (region) {
+          var p = data.regions[region];
+          p.history.forEach(function (h) { allT.push(Date.parse(h.t)); });
+          p.projection.forEach(function (pt) { allT.push(Date.parse(pt.t)); });
+        });
+        if (!allT.length) throw new Error("no data points in data.json");
+        state.fullDomain = [Math.min.apply(null, allT), Math.max.apply(null, allT)];
+        state.viewDomain = defaultViewDomain();
+        computeYDomains();
+
+        var asOfMs = Math.max.apply(null, Object.keys(data.regions).map(function (r) {
+          return Date.parse(data.regions[r].as_of);
+        }));
+        els.subtitle.textContent = "Latest reading: " + fmtSGT(asOfMs, { year: "numeric", month: "short", day: "2-digit" }) + " SGT";
+
+        buildLegend(data.colors);
+        buildStatusTable(data);
+        buildTable(data);
+        measureWidth();
+        buildPanel("chart-pm25", false);
+        buildPanel("chart-psi", true);
+        renderAll();
+      })
+      .catch(function (err) {
+        els.subtitle.textContent = "Failed to load data.json";
+        var p = document.createElement("p");
+        p.className = "empty-state";
+        p.textContent = "Could not load dashboard data (" + err.message + "). This page needs to be served over http(s), not opened as a local file.";
+        document.querySelector("#tab-panel-live .chart-card").replaceWith(p);
+      });
   }
 })();
 </script>
