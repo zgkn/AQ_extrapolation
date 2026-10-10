@@ -124,7 +124,7 @@ def time_to_threshold(baseline: float, latest: float, target_psi: float):
     return {"reachable": False, "needed_flat_pm25": target_pm25}
 
 
-THRESHOLDS = [100, 150, 200]
+THRESHOLDS = [100, 150, 200, 250]
 
 
 def to_float(s):

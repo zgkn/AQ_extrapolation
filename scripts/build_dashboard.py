@@ -2,7 +2,7 @@
 that renders them as an interactive SVG chart -- drag to pan, scroll/pinch
 to zoom, both the time-series PM2.5 and PSI panels for Singapore's five
 real reporting regions (north/south/east/west/central), with a flat-PM2.5
-projection on the PSI panel extrapolating toward the 100/150/200
+projection on the PSI panel extrapolating toward the 100/150/200/250
 thresholds).
 
 Two stacked single-axis panels (PM2.5, then PSI) -- never one dual-axis
@@ -277,7 +277,7 @@ INDEX_HTML = r"""<!doctype html>
   <div class="legend" id="legend"></div>
 
   <div class="chart-card">
-    <div class="panel-title">PM2.5 (&micro;g/m&sup3;, 1-hr) &mdash; grey lines mark the level that would push 24-hr PSI to 100/150/200</div>
+    <div class="panel-title">PM2.5 (&micro;g/m&sup3;, 1-hr) &mdash; grey lines mark the level that would push 24-hr PSI to 100/150/200/250</div>
     <svg class="chart" id="chart-pm25"></svg>
     <div class="panel-title">PSI (24-hr) &mdash; solid = actual, dashed = projected (flat 1-hr PM2.5 held constant)</div>
     <svg class="chart" id="chart-psi"></svg>
@@ -288,7 +288,7 @@ INDEX_HTML = r"""<!doctype html>
     <div class="table-wrap">
       <table class="data-table" id="status-table">
         <thead>
-          <tr><th>Region</th><th>PSI now</th><th>&rarr; 100</th><th>&rarr; 150</th><th>&rarr; 200</th></tr>
+          <tr><th>Region</th><th>PSI now</th><th>&rarr; 100</th><th>&rarr; 150</th><th>&rarr; 200</th><th>&rarr; 250</th></tr>
         </thead>
         <tbody id="status-table-body"></tbody>
       </table>
@@ -325,7 +325,7 @@ INDEX_HTML = r"""<!doctype html>
 
   var SG_TZ = "Asia/Singapore";
   var SG_OFFSET_MS = 8 * 3600 * 1000;
-  var THRESHOLDS = [100, 150, 200];
+  var THRESHOLDS = [100, 150, 200, 250];
   var MARGIN = { top: 10, right: 60, bottom: 6, left: 44 };
   var BOTTOM_AXIS_H = 24;
   var H_PM25 = 220, H_PSI = 250;
