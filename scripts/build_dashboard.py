@@ -453,6 +453,15 @@ INDEX_HTML = r"""<!doctype html>
     }).format(new Date(ms));
   }
 
+  // "YYYY-MM-DD HH:MM" -- used on the Past episodes tab, where dates span
+  // weeks/months apart and a plain ISO date + 24h time is quicker to scan
+  // and compare than a weekday-relative label.
+  function fmtDateTime(ms) {
+    return fmtAxisDate(ms) + " " + new Intl.DateTimeFormat("en-GB", {
+      timeZone: SG_TZ, hour: "2-digit", minute: "2-digit", hour12: false
+    }).format(new Date(ms));
+  }
+
   function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
   function niceTicks(min, max, count) {
@@ -1090,8 +1099,8 @@ INDEX_HTML = r"""<!doctype html>
     episodes.forEach(function (ep) {
       var opt = document.createElement("option");
       opt.value = ep.id;
-      opt.textContent = capitalize(ep.region) + " — " + fmtSGT(Date.parse(ep.episode_start)) +
-        " to " + fmtSGT(Date.parse(ep.episode_end)) + " (peak PSI " + Math.round(ep.peak_psi) + ")";
+      opt.textContent = capitalize(ep.region) + " — " + fmtDateTime(Date.parse(ep.episode_start)) +
+        " to " + fmtDateTime(Date.parse(ep.episode_end)) + " (peak PSI " + Math.round(ep.peak_psi) + ")";
       els.selectEpi.appendChild(opt);
     });
   }
@@ -1113,9 +1122,9 @@ INDEX_HTML = r"""<!doctype html>
     epiComputeYDomains(ep);
 
     els.metaEpi.innerHTML = "<strong>" + capitalize(ep.region) + "</strong> &middot; episode " +
-      fmtSGT(Date.parse(ep.episode_start), { year: "numeric", month: "short", day: "2-digit" }) + " to " +
-      fmtSGT(Date.parse(ep.episode_end), { year: "numeric", month: "short", day: "2-digit" }) +
-      " &middot; peak PSI " + Math.round(ep.peak_psi) + " at " + fmtSGT(Date.parse(ep.peak_time)) +
+      fmtDateTime(Date.parse(ep.episode_start)) + " to " +
+      fmtDateTime(Date.parse(ep.episode_end)) +
+      " &middot; peak PSI " + Math.round(ep.peak_psi) + " at " + fmtDateTime(Date.parse(ep.peak_time)) +
       " &middot; chart padded " + estate.data.buffer_hours + "h before/after";
 
     epiBuildTable(ep);
@@ -1386,7 +1395,7 @@ INDEX_HTML = r"""<!doctype html>
     var timeRow = document.createElement("div");
     timeRow.className = "row";
     var k0 = document.createElement("span"); k0.className = "k"; k0.textContent = "Time";
-    var v0 = document.createElement("span"); v0.className = "v"; v0.textContent = fmtAxisDate(tMs) + " " + fmtSGT(tMs, { weekday: undefined });
+    var v0 = document.createElement("span"); v0.className = "v"; v0.textContent = fmtDateTime(tMs);
     timeRow.appendChild(k0); timeRow.appendChild(v0);
     els.tooltip.appendChild(timeRow);
 
@@ -1412,7 +1421,7 @@ INDEX_HTML = r"""<!doctype html>
     els.tableBodyEpi.innerHTML = "";
     rows.forEach(function (r) {
       var tr = document.createElement("tr");
-      appendCell(tr, fmtSGT(Date.parse(r.t), { year: "numeric", month: "short", day: "2-digit" }));
+      appendCell(tr, fmtDateTime(Date.parse(r.t)));
       appendCell(tr, r.psi === null ? "–" : Math.round(r.psi));
       appendCell(tr, r.pm25_1h === null ? "–" : r.pm25_1h.toFixed(1));
       els.tableBodyEpi.appendChild(tr);
