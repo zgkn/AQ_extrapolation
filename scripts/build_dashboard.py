@@ -223,6 +223,18 @@ INDEX_HTML = r"""<!doctype html>
   }
   .legend .key { display: inline-flex; align-items: center; gap: 5px; }
   .legend .swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  .region-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+  .region-filter button {
+    font: inherit;
+    font-size: 0.78rem;
+    padding: 4px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .region-filter button.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
   .picker-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 4px 0 10px; }
   .picker-row label { font-size: 0.82rem; color: var(--muted); }
   select#episode-select {
@@ -354,6 +366,8 @@ INDEX_HTML = r"""<!doctype html>
 
   <div id="tab-panel-episodes" hidden>
     <p class="subtitle" id="subtitle-epi">Loading&hellip;</p>
+
+    <div class="region-filter" id="region-filter-epi" role="group" aria-label="Filter episodes by region"></div>
 
     <div class="picker-row">
       <label for="episode-select">Episode</label>
@@ -1078,6 +1092,7 @@ INDEX_HTML = r"""<!doctype html>
   var estate = {
     data: null,
     episode: null,      // the currently-selected episode object
+    regionFilter: "all", // "all" or a region name -- which episodes the picker lists
     fullDomain: null,
     viewDomain: null,
     pm25YDomain: null,
@@ -1092,6 +1107,72 @@ INDEX_HTML = r"""<!doctype html>
     var card = document.getElementById("chart-card-epi");
     if (!card) return;
     estate.width = Math.max(280, card.clientWidth - 24);
+  }
+
+  // Region filter buttons -- built once per fetch from whichever regions
+  // actually have episodes (not hardcoded, so a region with zero episodes
+  // in the search window doesn't offer an always-empty filter).
+  function epiBuildRegionFilter(episodes) {
+    var regions = [];
+    episodes.forEach(function (ep) {
+      if (regions.indexOf(ep.region) === -1) regions.push(ep.region);
+    });
+    // Fixed display order (matches the live dashboard's legend), not
+    // first-seen order.
+    var order = ["north", "south", "east", "west", "central"];
+    regions.sort(function (a, b) { return order.indexOf(a) - order.indexOf(b); });
+
+    els.regionFilterEpi.innerHTML = "";
+    var allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.textContent = "All regions";
+    allBtn.dataset.region = "all";
+    els.regionFilterEpi.appendChild(allBtn);
+    regions.forEach(function (region) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = capitalize(region);
+      btn.dataset.region = region;
+      els.regionFilterEpi.appendChild(btn);
+    });
+    epiUpdateRegionFilterButtons();
+
+    els.regionFilterEpi.addEventListener("click", function (evt) {
+      var btn = evt.target.closest("button");
+      if (!btn) return;
+      estate.regionFilter = btn.dataset.region;
+      epiUpdateRegionFilterButtons();
+      epiApplyFilter(true);
+    });
+  }
+
+  function epiUpdateRegionFilterButtons() {
+    var buttons = els.regionFilterEpi.querySelectorAll("button");
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].classList.toggle("active", buttons[i].dataset.region === estate.regionFilter);
+    }
+  }
+
+  // Episodes matching the current region filter, oldest-first -- the
+  // dropdown reads top-to-bottom as a timeline rather than most-recent-first.
+  function epiFilteredSortedEpisodes() {
+    var list = estate.data.episodes.filter(function (ep) {
+      return estate.regionFilter === "all" || ep.region === estate.regionFilter;
+    });
+    list.sort(function (a, b) { return Date.parse(a.episode_start) - Date.parse(b.episode_start); });
+    return list;
+  }
+
+  // Rebuilds the episode picker from the current region filter and
+  // (re)selects an episode: the previously-selected one if it's still in
+  // the filtered list (preserveSelection), else the most recent one.
+  function epiApplyFilter(preserveSelection) {
+    var list = epiFilteredSortedEpisodes();
+    epiBuildSelect(list);
+    if (!list.length) return;
+    var keepId = preserveSelection && estate.episode && list.some(function (ep) { return ep.id === estate.episode.id; })
+      ? estate.episode.id : list[list.length - 1].id;
+    epiSelectEpisode(keepId);
   }
 
   function epiBuildSelect(episodes) {
@@ -1443,6 +1524,7 @@ INDEX_HTML = r"""<!doctype html>
           " -- " + data.episodes.length + " episode(s) found";
 
         if (!data.episodes.length) {
+          els.regionFilterEpi.hidden = true;
           document.querySelector("#tab-panel-episodes .picker-row").hidden = true;
           document.querySelector("#tab-panel-episodes .toolbar").hidden = true;
           var p = document.createElement("p");
@@ -1453,11 +1535,11 @@ INDEX_HTML = r"""<!doctype html>
           return;
         }
 
-        epiBuildSelect(data.episodes);
+        epiBuildRegionFilter(data.episodes);
         epiMeasureWidth();
         epiBuildPanel("chart-pm25-epi", false);
         epiBuildPanel("chart-psi-epi", true);
-        epiSelectEpisode(data.episodes[0].id);
+        epiApplyFilter(false);
       })
       .catch(function (err) {
         els.subtitleEpi.textContent = "Failed to load episode data";
@@ -1518,6 +1600,7 @@ INDEX_HTML = r"""<!doctype html>
     els.tabBtnLive = document.getElementById("tab-btn-live");
     els.tabBtnEpi = document.getElementById("tab-btn-episodes");
     els.subtitleEpi = document.getElementById("subtitle-epi");
+    els.regionFilterEpi = document.getElementById("region-filter-epi");
     els.selectEpi = document.getElementById("episode-select");
     els.metaEpi = document.getElementById("episode-meta");
     els.resetBtnEpi = document.getElementById("reset-view-epi");
