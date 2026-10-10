@@ -257,6 +257,8 @@ INDEX_HTML = r"""<!doctype html>
   table.data-table thead th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font-variant-numeric: normal; }
   footer { margin-top: 16px; font-size: 0.78rem; color: var(--muted); line-height: 1.5; }
   .empty-state { color: var(--muted); font-size: 0.9rem; padding: 24px 0; text-align: center; }
+  .other-link { font-size: 0.82rem; margin: 0 0 12px; }
+  .other-link a { color: var(--ink); }
 </style>
 </head>
 <body>
@@ -268,6 +270,7 @@ INDEX_HTML = r"""<!doctype html>
     </div>
     <button class="refresh-btn" id="refresh-page" type="button" title="Reload the page to fetch the latest data">&#8635; Refresh</button>
   </header>
+  <p class="other-link"><a href="episodes/index.html">View past haze episodes (PSI &gt; 100) &rarr;</a></p>
 
   <div class="toolbar">
     <span>Drag to pan &middot; scroll or pinch to zoom &middot; tap a point for readings</span>
