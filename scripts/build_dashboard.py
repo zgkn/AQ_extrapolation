@@ -563,7 +563,13 @@ INDEX_HTML = r"""<!doctype html>
   }
 
   function computeYDomains() {
-    var pm25Vals = [0], psiVals = [0].concat(THRESHOLDS);
+    // Padding the PM2.5 axis out to cover every pm25_thresholds value (not
+    // just the actual data) mirrors how the PSI axis already pads out to
+    // THRESHOLDS -- so the "what PM2.5 would push PSI to 100/150/200/250"
+    // reference lines are always visible, not just once a region's
+    // readings happen to climb into range.
+    var pm25ThresholdVals = (state.data.pm25_thresholds || []).map(function (t) { return t.pm25; });
+    var pm25Vals = [0].concat(pm25ThresholdVals), psiVals = [0].concat(THRESHOLDS);
     Object.keys(state.data.regions).forEach(function (region) {
       var p = state.data.regions[region];
       p.history.forEach(function (h) {
@@ -678,10 +684,10 @@ INDEX_HTML = r"""<!doctype html>
     } else if (state.data.pm25_thresholds) {
       // The PM2.5 level each PSI threshold corresponds to -- a single
       // reference value per threshold (not per region, see pm25_thresholds
-      // in build_dashboard.py for why), only drawn when it falls inside
-      // the current Y range so a quiet low-PM2.5 day isn't forced to
-      // stretch the axis up to the PSI-200 equivalent (150+) and crush the
-      // actual readings into an unreadable sliver.
+      // in build_dashboard.py for why). computeYDomains() already pads the
+      // PM2.5 axis out to cover every one of these, so the in-range check
+      // here is just a defensive no-op in the normal case, not what keeps
+      // them visible.
       state.data.pm25_thresholds.forEach(function (pt) {
         if (pt.pm25 < yDomain[0] || pt.pm25 > yDomain[1]) return;
         panel.plot.appendChild(svgEl("line", { x1: 0, x2: innerW, y1: y(pt.pm25), y2: y(pt.pm25), stroke: "var(--faint)", "stroke-width": 1 }));
