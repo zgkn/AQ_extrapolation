@@ -92,10 +92,27 @@ def main() -> None:
     if start > today:
         raise SystemExit(f"--start-date {start} is in the future (today is {today})")
 
+    existing = load_existing()
+
+    # A --start-date later than where existing data already leaves off would
+    # silently skip the days in between -- e.g. the last run covered through
+    # Oct 10, then a later run is given --start-date=Oct 12, leaving Oct 11
+    # (and the rest of Oct 10) permanently missing, since this script has no
+    # retention/backfill-gap logic of its own to notice afterward. Clamp to
+    # that continuation point instead, so --start-date can only narrow a
+    # backfill that's already continuous, never open a new gap in it.
+    if existing:
+        latest_existing_day = max(parse_ts(r["timestamp"]) for r in existing.values()).date()
+        if start > latest_existing_day:
+            log.warning(
+                "--start-date %s would skip existing data between %s and %s -- backfilling from %s instead",
+                start, latest_existing_day, start, latest_existing_day,
+            )
+            start = latest_existing_day
+
     days = day_range(start, today)
     log.info("backfilling %d day(s): %s .. %s", len(days), days[0], days[-1])
 
-    existing = load_existing()
     new_rows: dict[tuple[str, str], dict] = {}
     failed_days = []
     for i, day in enumerate(days):
