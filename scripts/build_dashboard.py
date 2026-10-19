@@ -513,6 +513,8 @@ INDEX_HTML = r"""<!doctype html>
     </div>
 
     <div class="chart-card" id="chart-card-whatif">
+      <div class="panel-title">PM2.5 (&micro;g/m&sup3;, 24-hr avg-equivalent) &mdash; what the PSI projection below is actually running on</div>
+      <svg class="chart" id="chart-pm25-whatif"></svg>
       <div class="panel-title">PSI (24-hr) &mdash; projected hourly over the next 3 days (through the end of that final day), holding the entered 1-hr PM2.5 range flat</div>
       <svg class="chart" id="chart-psi-whatif"></svg>
     </div>
@@ -521,7 +523,7 @@ INDEX_HTML = r"""<!doctype html>
       <button id="toggle-table-whatif" type="button">View data table</button>
       <div class="table-wrap" id="table-wrap-whatif" hidden>
         <table class="data-table" id="data-table-whatif">
-          <thead><tr><th>Time (SGT)</th><th>PSI (low)</th><th>PSI (high)</th></tr></thead>
+          <thead><tr><th>Time (SGT)</th><th>PM2.5 (low)</th><th>PM2.5 (high)</th><th>PSI (low)</th><th>PSI (high)</th></tr></thead>
           <tbody id="data-table-body-whatif"></tbody>
         </table>
       </div>
@@ -2156,6 +2158,7 @@ INDEX_HTML = r"""<!doctype html>
     injections: [],      // [{idx, which}] -- points where the user has injected a new value, for the chart markers
     fullDomain: null,
     viewDomain: null,
+    pm25YDomain: null,
     psiYDomain: null,
     panels: [],
     width: 860,
@@ -2257,17 +2260,20 @@ INDEX_HTML = r"""<!doctype html>
 
     if (!wi.panels.length) {
       wiMeasureWidth();
+      wiBuildPanel("chart-pm25-whatif", false);
       wiBuildPanel("chart-psi-whatif", true);
     }
     wiRenderAll();
   }
 
   function wiComputeYDomain() {
-    var vals = [0].concat(THRESHOLDS);
-    wi.lowSeries.forEach(function (p) { vals.push(p.psi); });
-    wi.highSeries.forEach(function (p) { vals.push(p.psi); });
-    var ticks = niceTicks(Math.min.apply(null, vals), Math.max.apply(null, vals), 4);
-    wi.psiYDomain = [ticks[0], ticks[ticks.length - 1]];
+    var psiVals = [0].concat(THRESHOLDS), pm25Vals = [0];
+    wi.lowSeries.forEach(function (p) { psiVals.push(p.psi); pm25Vals.push(p.avgPm25); });
+    wi.highSeries.forEach(function (p) { psiVals.push(p.psi); pm25Vals.push(p.avgPm25); });
+    var psiTicks = niceTicks(Math.min.apply(null, psiVals), Math.max.apply(null, psiVals), 4);
+    var pm25Ticks = niceTicks(Math.min.apply(null, pm25Vals), Math.max.apply(null, pm25Vals), 4);
+    wi.psiYDomain = [psiTicks[0], psiTicks[psiTicks.length - 1]];
+    wi.pm25YDomain = [pm25Ticks[0], pm25Ticks[pm25Ticks.length - 1]];
   }
 
   // Injects a new "hold flat from here" PM2.5 value at hour `idx` on the
@@ -2314,9 +2320,9 @@ INDEX_HTML = r"""<!doctype html>
   }
 
   function wiRenderPanel(panel) {
-    var W = wi.width, H = panelHeight(true);
+    var W = wi.width, H = panelHeight(panel.isPsi);
     var innerW = W - MARGIN.left - MARGIN.right;
-    var innerH = panelInnerH(true);
+    var innerH = panelInnerH(panel.isPsi);
 
     panel.svg.setAttribute("viewBox", "0 0 " + W + " " + H);
     panel.svg.setAttribute("width", W);
@@ -2331,11 +2337,13 @@ INDEX_HTML = r"""<!doctype html>
     panel.plot.innerHTML = "";
     panel.chromeGroup.innerHTML = "";
 
+    var field = panel.isPsi ? "psi" : "avgPm25";
+    var yDomain = panel.isPsi ? wi.psiYDomain : wi.pm25YDomain;
     var x = scaleLinear(wi.viewDomain, [0, innerW]);
-    var y = scaleLinear(wi.psiYDomain, [innerH, 0]);
+    var y = scaleLinear(yDomain, [innerH, 0]);
     panel.x = x; panel.y = y; panel.innerW = innerW; panel.innerH = innerH;
 
-    var yTicks = niceTicks(wi.psiYDomain[0], wi.psiYDomain[1], 4);
+    var yTicks = niceTicks(yDomain[0], yDomain[1], 4);
     yTicks.forEach(function (t) {
       panel.gridGroup.appendChild(svgEl("line", { x1: 0, x2: innerW, y1: y(t), y2: y(t), stroke: "var(--grid)", "stroke-width": 1 }));
       var lbl = svgEl("text", { class: "axis-label", x: -6, y: y(t) + 3, "text-anchor": "end" });
@@ -2348,40 +2356,44 @@ INDEX_HTML = r"""<!doctype html>
     timeTickInfo.ticks.forEach(function (t) {
       var xp = x(t);
       panel.gridGroup.appendChild(svgEl("line", { x1: xp, x2: xp, y1: 0, y2: innerH, stroke: "var(--grid)", "stroke-width": 1 }));
-      panel.chromeGroup.appendChild(svgEl("line", { x1: xp, x2: xp, y1: innerH, y2: innerH + 4, stroke: "var(--faint)", "stroke-width": 1 }));
-      var lbl = svgEl("text", { class: "axis-label", x: xp, y: innerH + 15, "text-anchor": "middle" });
-      lbl.textContent = useDateTicks ? fmtAxisDate(t) : fmtSGT(t);
-      panel.chromeGroup.appendChild(lbl);
+      if (panel.isPsi) {
+        panel.chromeGroup.appendChild(svgEl("line", { x1: xp, x2: xp, y1: innerH, y2: innerH + 4, stroke: "var(--faint)", "stroke-width": 1 }));
+        var lbl = svgEl("text", { class: "axis-label", x: xp, y: innerH + 15, "text-anchor": "middle" });
+        lbl.textContent = useDateTicks ? fmtAxisDate(t) : fmtSGT(t);
+        panel.chromeGroup.appendChild(lbl);
+      }
     });
 
-    THRESHOLDS.forEach(function (th) {
-      if (th < wi.psiYDomain[0] || th > wi.psiYDomain[1]) return;
-      panel.plot.appendChild(svgEl("line", { x1: 0, x2: innerW, y1: y(th), y2: y(th), stroke: "var(--faint)", "stroke-width": 1 }));
-      var lbl = svgEl("text", { class: "threshold-label", x: innerW - 2, y: y(th) - 3, "text-anchor": "end" });
-      lbl.textContent = "PSI " + th;
-      panel.chromeGroup.appendChild(lbl);
-    });
+    if (panel.isPsi) {
+      THRESHOLDS.forEach(function (th) {
+        if (th < yDomain[0] || th > yDomain[1]) return;
+        panel.plot.appendChild(svgEl("line", { x1: 0, x2: innerW, y1: y(th), y2: y(th), stroke: "var(--faint)", "stroke-width": 1 }));
+        var lbl = svgEl("text", { class: "threshold-label", x: innerW - 2, y: y(th) - 3, "text-anchor": "end" });
+        lbl.textContent = "PSI " + th;
+        panel.chromeGroup.appendChild(lbl);
+      });
+    }
 
-    var lowPts = wi.lowSeries.map(function (p) { return { t: Date.parse(p.t), psi: p.psi }; });
-    var highPts = wi.highSeries.map(function (p) { return { t: Date.parse(p.t), psi: p.psi }; });
+    var lowPts = wi.lowSeries.map(function (p) { return { t: Date.parse(p.t), v: p[field] }; });
+    var highPts = wi.highSeries.map(function (p) { return { t: Date.parse(p.t), v: p[field] }; });
 
     // Shaded band between the low and high scenario -- a closed polygon
     // tracing the low line left-to-right then the high line back right-to-left.
-    var bandPts = lowPts.map(function (p) { return x(p.t).toFixed(1) + "," + y(p.psi).toFixed(1); })
-      .concat(highPts.slice().reverse().map(function (p) { return x(p.t).toFixed(1) + "," + y(p.psi).toFixed(1); }));
+    var bandPts = lowPts.map(function (p) { return x(p.t).toFixed(1) + "," + y(p.v).toFixed(1); })
+      .concat(highPts.slice().reverse().map(function (p) { return x(p.t).toFixed(1) + "," + y(p.v).toFixed(1); }));
     panel.plot.appendChild(svgEl("polygon", { points: bandPts.join(" "), fill: "var(--whatif-band)", stroke: "none" }));
 
     panel.plot.appendChild(svgEl("path", {
-      d: linePath(lowPts, x, y, "t", "psi"), fill: "none", stroke: "var(--whatif-line)",
+      d: linePath(lowPts, x, y, "t", "v"), fill: "none", stroke: "var(--whatif-line)",
       "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round"
     }));
     panel.plot.appendChild(svgEl("path", {
-      d: linePath(highPts, x, y, "t", "psi"), fill: "none", stroke: "var(--whatif-line)",
+      d: linePath(highPts, x, y, "t", "v"), fill: "none", stroke: "var(--whatif-line)",
       "stroke-width": 2, "stroke-dasharray": "6 4", "stroke-linejoin": "round", "stroke-linecap": "round"
     }));
     if (lowPts.length <= MAX_MARKER_POINTS * 2) {
-      drawMarkers(panel.plot, lowPts, x, y, "t", "psi", "var(--whatif-line)", 1);
-      drawMarkers(panel.plot, highPts, x, y, "t", "psi", "var(--whatif-line)", 0.6);
+      drawMarkers(panel.plot, lowPts, x, y, "t", "v", "var(--whatif-line)", 1);
+      drawMarkers(panel.plot, highPts, x, y, "t", "v", "var(--whatif-line)", 0.6);
     }
 
     // Larger ringed marker at each hour the user has injected a new value,
@@ -2391,7 +2403,7 @@ INDEX_HTML = r"""<!doctype html>
       var p = pts[inj.idx];
       if (!p) return;
       panel.plot.appendChild(svgEl("circle", {
-        cx: x(p.t).toFixed(1), cy: y(p.psi).toFixed(1), r: 5,
+        cx: x(p.t).toFixed(1), cy: y(p.v).toFixed(1), r: 5,
         fill: "var(--surface)", stroke: "var(--whatif-line)", "stroke-width": 2
       }));
     });
@@ -2581,7 +2593,8 @@ INDEX_HTML = r"""<!doctype html>
       var row = document.createElement("div");
       row.className = "row";
       var k = document.createElement("span"); k.className = "k"; k.textContent = pair[0];
-      var v = document.createElement("span"); v.className = "v"; v.textContent = "PSI " + Math.round(pair[1].psi);
+      var v = document.createElement("span"); v.className = "v";
+      v.textContent = "PSI " + Math.round(pair[1].psi) + " / PM " + pair[1].avgPm25.toFixed(1);
       row.appendChild(k); row.appendChild(v);
       els.tooltip.appendChild(row);
     });
@@ -2620,6 +2633,8 @@ INDEX_HTML = r"""<!doctype html>
     for (var i = 0; i < wi.lowSeries.length; i++) {
       var tr = document.createElement("tr");
       appendCell(tr, fmtDateTime(Date.parse(wi.lowSeries[i].t)));
+      appendCell(tr, wi.lowSeries[i].avgPm25.toFixed(1));
+      appendCell(tr, wi.highSeries[i].avgPm25.toFixed(1));
       appendCell(tr, Math.round(wi.lowSeries[i].psi));
       appendCell(tr, Math.round(wi.highSeries[i].psi));
       els.tableBodyWhatif.appendChild(tr);
