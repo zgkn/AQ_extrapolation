@@ -142,6 +142,8 @@ INDEX_HTML = r"""<!doctype html>
     --grid: #e1e0d9;
     --border: rgba(11,11,11,0.10);
     --band: rgba(235,104,52,0.08);
+    --whatif-line: #2a78d6;
+    --whatif-band: rgba(42,120,214,0.12);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -154,6 +156,8 @@ INDEX_HTML = r"""<!doctype html>
       --grid: #2c2c2a;
       --border: rgba(255,255,255,0.10);
       --band: rgba(235,104,52,0.14);
+      --whatif-line: #5b9bea;
+      --whatif-band: rgba(91,155,234,0.18);
     }
   }
   * { box-sizing: border-box; }
@@ -250,6 +254,42 @@ INDEX_HTML = r"""<!doctype html>
   }
   .episode-meta { font-size: 0.82rem; color: var(--muted); margin: 4px 0 10px; line-height: 1.5; }
   .episode-meta strong { color: var(--ink); }
+  .whatif-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 4px 0 10px;
+  }
+  .whatif-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .whatif-row label { font-size: 0.82rem; color: var(--muted); min-width: 170px; }
+  .whatif-row .whatif-dash { color: var(--faint); }
+  .whatif-form input[type="number"] {
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--ink);
+    width: 80px;
+  }
+  .whatif-form button {
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 7px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--ink);
+    color: var(--bg);
+    cursor: pointer;
+    font-weight: 600;
+  }
+  #whatif-error { color: #c0392b; }
   .chart-card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -322,6 +362,7 @@ INDEX_HTML = r"""<!doctype html>
     <button class="tab-btn active" id="tab-btn-live" type="button" role="tab" aria-selected="true">Live dashboard</button>
     <button class="tab-btn" id="tab-btn-episodes" type="button" role="tab" aria-selected="false">Past episodes</button>
     <button class="tab-btn" id="tab-btn-h15" type="button" role="tab" aria-selected="false">2015 Haze</button>
+    <button class="tab-btn" id="tab-btn-whatif" type="button" role="tab" aria-selected="false">What-if Projection</button>
   </div>
 
   <div id="tab-panel-live">
@@ -429,6 +470,47 @@ INDEX_HTML = r"""<!doctype html>
     </div>
   </div>
 
+  <div id="tab-panel-whatif" hidden>
+    <p class="subtitle" id="subtitle-whatif">Loading&hellip;</p>
+
+    <div class="whatif-form" id="whatif-form">
+      <div class="whatif-row">
+        <label for="whatif-psi-low">24-hr PSI range</label>
+        <input type="number" id="whatif-psi-low" step="1" min="0" inputmode="decimal">
+        <span class="whatif-dash">&ndash;</span>
+        <input type="number" id="whatif-psi-high" step="1" min="0" inputmode="decimal">
+      </div>
+      <div class="whatif-row">
+        <label for="whatif-pm-low">Expected 1-hr PM2.5 range (&micro;g/m&sup3;)</label>
+        <input type="number" id="whatif-pm-low" step="0.1" min="0" inputmode="decimal">
+        <span class="whatif-dash">&ndash;</span>
+        <input type="number" id="whatif-pm-high" step="0.1" min="0" inputmode="decimal">
+      </div>
+      <button id="whatif-submit" type="button">Calculate</button>
+    </div>
+    <p class="status-note" id="whatif-error" hidden></p>
+
+    <div class="toolbar">
+      <span>Drag to pan &middot; scroll or pinch to zoom &middot; tap a point for readings</span>
+      <button id="reset-view-whatif" type="button">Reset view</button>
+    </div>
+
+    <div class="chart-card" id="chart-card-whatif">
+      <div class="panel-title">PSI (24-hr) &mdash; projected hourly over the next 3 days, holding the entered 1-hr PM2.5 range flat</div>
+      <svg class="chart" id="chart-psi-whatif"></svg>
+    </div>
+
+    <div class="table-section">
+      <button id="toggle-table-whatif" type="button">View data table</button>
+      <div class="table-wrap" id="table-wrap-whatif" hidden>
+        <table class="data-table" id="data-table-whatif">
+          <thead><tr><th>Time (SGT)</th><th>PSI (low)</th><th>PSI (high)</th></tr></thead>
+          <tbody id="data-table-body-whatif"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <footer>
     Model note: PSI here tracks only the PM2.5 sub-index (real PSI = max of six pollutant
     sub-indices: PM2.5, PM10, SO2, CO, O3, NO2), so on a day another pollutant dominates the
@@ -438,7 +520,10 @@ INDEX_HTML = r"""<!doctype html>
     episodes tab) is a contiguous stretch where a region's 24-hr PSI was above the threshold
     shown there; each chart pads 24h before/after for context. The 2015 Haze tab shows actual
     readings only (no projection) from NEA's historical PM2.5/PSI datasets, 1 Jun&ndash;30 Nov
-    2015. Data: data.gov.sg.
+    2015. The What-if Projection tab uses the same flat-hold model as the Live dashboard, but
+    lets you enter your own 24-hr PSI and 1-hr PM2.5 ranges instead of using live readings --
+    the low/high band is just that model run once at each end of your two ranges, not a formal
+    confidence interval. Data: data.gov.sg.
   </footer>
 </main>
 
@@ -510,6 +595,57 @@ INDEX_HTML = r"""<!doctype html>
   }
 
   function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  // 24-hr avg PM2.5 (ug/m3) <-> PSI breakpoints + flat-hold projection math,
+  // ported from aq_lib.py (PM25_PSI_BREAKPOINTS / pm25_to_psi / psi_to_pm25 /
+  // projected_avg_pm25) for the What-if Projection tab, which computes
+  // entirely client-side from user-entered numbers rather than precomputed
+  // server-side values -- keep these two copies in sync by hand.
+  var PM25_PSI_BREAKPOINTS = [
+    [0.0, 0], [12.0, 50], [55.4, 100], [150.4, 200], [250.4, 300], [350.4, 400], [500.4, 500]
+  ];
+
+  function interpLin(x, x0, x1, y0, y1) {
+    if (x1 === x0) return y0;
+    return y0 + (x - x0) * (y1 - y0) / (x1 - x0);
+  }
+
+  function pm25ToPsi(pm25) {
+    if (pm25 <= 0) return 0;
+    var pts = PM25_PSI_BREAKPOINTS;
+    if (pm25 >= pts[pts.length - 1][0]) {
+      var a = pts[pts.length - 2], b = pts[pts.length - 1];
+      return interpLin(pm25, a[0], b[0], a[1], b[1]);
+    }
+    for (var i = 0; i < pts.length - 1; i++) {
+      var x0 = pts[i][0], y0 = pts[i][1], x1 = pts[i + 1][0], y1 = pts[i + 1][1];
+      if (x0 <= pm25 && pm25 <= x1) return interpLin(pm25, x0, x1, y0, y1);
+    }
+    return pts[pts.length - 1][1];
+  }
+
+  function psiToPm25(psi) {
+    if (psi <= 0) return 0;
+    var pts = PM25_PSI_BREAKPOINTS;
+    if (psi >= pts[pts.length - 1][1]) {
+      var a = pts[pts.length - 2], b = pts[pts.length - 1];
+      return interpLin(psi, a[1], b[1], a[0], b[0]);
+    }
+    for (var i = 0; i < pts.length - 1; i++) {
+      var x0 = pts[i][0], y0 = pts[i][1], x1 = pts[i + 1][0], y1 = pts[i + 1][1];
+      if (y0 <= psi && psi <= y1) return interpLin(psi, y0, y1, x0, x1);
+    }
+    return pts[pts.length - 1][0];
+  }
+
+  // Projected 24-hr avg PM2.5 at t hours ahead, holding the "latest" 1-hr
+  // reading flat and linearly displacing the 24-hr window -- identical to
+  // aq_lib.projected_avg_pm25. Past t=24 the whole window is the flat
+  // value, so callers just use `latest` directly for t > 24.
+  function projectedAvgPm25(baseline, latest, tHours) {
+    var t = Math.max(0, Math.min(24, tHours));
+    return ((24 - t) * baseline + t * latest) / 24;
+  }
 
   function niceTicks(min, max, count) {
     if (min === max) { min -= 1; max += 1; }
@@ -1978,6 +2114,419 @@ INDEX_HTML = r"""<!doctype html>
   }
 
   // ---------------------------------------------------------------------
+  // What-if Projection tab -- lets the user enter their own 24-hr PSI and
+  // 1-hr PM2.5 ranges (prefilled from the Live dashboard's latest readings
+  // the first time this tab is opened) and runs the same flat-hold
+  // projection model as the Live dashboard tab, but out to 72h (3 days)
+  // instead of 24h, and entirely client-side from the entered numbers --
+  // there's no new data file/workflow behind this tab.
+  //
+  // The model is linear and non-decreasing in both the baseline (PSI) and
+  // the held-flat latest reading (PM2.5), so the pointwise low/high band is
+  // exactly the model run once at (psiLow, pmLow) and once at (psiHigh,
+  // pmHigh) -- no need to enumerate all four corner combinations.
+  // ---------------------------------------------------------------------
+  var WHATIF_HOURS = 72; // 3 days, hourly
+
+  var wi = {
+    nowMs: null,        // anchor time for the projection (the Live dashboard's latest-reading timestamp)
+    lowSeries: null,     // [{t, psi}]
+    highSeries: null,
+    fullDomain: null,
+    viewDomain: null,
+    psiYDomain: null,
+    panels: [],
+    width: 860,
+    pinned: false,
+    initialized: false,  // true once this tab's first activation has kicked off
+  };
+  var onLiveDataReady = []; // callbacks queued if this tab opens before the Live dashboard's fetch resolves
+
+  function wiMeasureWidth() {
+    var card = document.getElementById("chart-card-whatif");
+    if (!card) return;
+    wi.width = Math.max(280, card.clientWidth - 24);
+  }
+
+  function wiPopulateDefaults() {
+    var psiVals = [], pmVals = [];
+    Object.keys(state.data.regions).forEach(function (region) {
+      var hist = state.data.regions[region].history;
+      var last = hist.length ? hist[hist.length - 1] : null;
+      if (!last) return;
+      if (last.psi !== null && last.psi !== undefined) psiVals.push(last.psi);
+      if (last.pm25_1h !== null && last.pm25_1h !== undefined) pmVals.push(last.pm25_1h);
+    });
+    if (psiVals.length) {
+      els.wiPsiLow.value = Math.round(Math.min.apply(null, psiVals));
+      els.wiPsiHigh.value = Math.round(Math.max.apply(null, psiVals));
+    }
+    if (pmVals.length) {
+      els.wiPmLow.value = Math.min.apply(null, pmVals).toFixed(1);
+      els.wiPmHigh.value = Math.max.apply(null, pmVals).toFixed(1);
+    }
+    var asOfMs = Math.max.apply(null, Object.keys(state.data.regions).map(function (r) {
+      return Date.parse(state.data.regions[r].as_of);
+    }));
+    wi.nowMs = asOfMs;
+    els.subtitleWhatif.textContent = "Default range is today's min–max across all regions, as of " +
+      fmtDateTime(asOfMs) + " SGT — edit and recalculate as you like.";
+  }
+
+  function wiCalculate() {
+    var psiLow = parseFloat(els.wiPsiLow.value);
+    var psiHigh = parseFloat(els.wiPsiHigh.value);
+    var pmLow = parseFloat(els.wiPmLow.value);
+    var pmHigh = parseFloat(els.wiPmHigh.value);
+
+    var errs = [];
+    [["24-hr PSI low", psiLow], ["24-hr PSI high", psiHigh], ["1-hr PM2.5 low", pmLow], ["1-hr PM2.5 high", pmHigh]].forEach(function (pair) {
+      if (!isFinite(pair[1]) || pair[1] < 0) errs.push(pair[0] + " must be a non-negative number");
+    });
+    if (!errs.length && psiLow > psiHigh) errs.push("24-hr PSI low must be ≤ high");
+    if (!errs.length && pmLow > pmHigh) errs.push("1-hr PM2.5 low must be ≤ high");
+
+    if (errs.length) {
+      els.whatifError.textContent = errs.join("; ");
+      els.whatifError.hidden = false;
+      return;
+    }
+    els.whatifError.hidden = true;
+
+    var baselineLow = psiToPm25(psiLow);
+    var baselineHigh = psiToPm25(psiHigh);
+
+    var lowSeries = [], highSeries = [];
+    for (var h = 0; h <= WHATIF_HOURS; h++) {
+      var tMs = wi.nowMs + h * 3600 * 1000;
+      var avgLow = h <= 24 ? projectedAvgPm25(baselineLow, pmLow, h) : pmLow;
+      var avgHigh = h <= 24 ? projectedAvgPm25(baselineHigh, pmHigh, h) : pmHigh;
+      var tIso = new Date(tMs).toISOString();
+      lowSeries.push({ t: tIso, psi: pm25ToPsi(avgLow) });
+      highSeries.push({ t: tIso, psi: pm25ToPsi(avgHigh) });
+    }
+    wi.lowSeries = lowSeries;
+    wi.highSeries = highSeries;
+    wi.fullDomain = [wi.nowMs, wi.nowMs + WHATIF_HOURS * 3600 * 1000];
+    wi.viewDomain = wi.fullDomain.slice();
+    wi.pinned = false;
+    els.tooltip.hidden = true;
+    wiComputeYDomain();
+    wiBuildTable();
+
+    if (!wi.panels.length) {
+      wiMeasureWidth();
+      wiBuildPanel("chart-psi-whatif", true);
+    }
+    wiRenderAll();
+  }
+
+  function wiComputeYDomain() {
+    var vals = [0].concat(THRESHOLDS);
+    wi.lowSeries.forEach(function (p) { vals.push(p.psi); });
+    wi.highSeries.forEach(function (p) { vals.push(p.psi); });
+    var ticks = niceTicks(Math.min.apply(null, vals), Math.max.apply(null, vals), 4);
+    wi.psiYDomain = [ticks[0], ticks[ticks.length - 1]];
+  }
+
+  function wiBuildPanel(id, isPsi) { return buildPanelGeneric(id, isPsi, wi.panels, wiAttachInteraction); }
+
+  function wiRenderAll() {
+    if (!wi.lowSeries) return;
+    wi.panels.forEach(wiRenderPanel);
+  }
+
+  function wiRenderPanel(panel) {
+    var W = wi.width, H = panelHeight(true);
+    var innerW = W - MARGIN.left - MARGIN.right;
+    var innerH = panelInnerH(true);
+
+    panel.svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    panel.svg.setAttribute("width", W);
+    panel.svg.setAttribute("height", H);
+    panel.g.setAttribute("transform", "translate(" + MARGIN.left + "," + MARGIN.top + ")");
+    panel.clipRect.setAttribute("x", -2);
+    panel.clipRect.setAttribute("y", -2);
+    panel.clipRect.setAttribute("width", innerW + 4);
+    panel.clipRect.setAttribute("height", innerH + 4);
+
+    panel.gridGroup.innerHTML = "";
+    panel.plot.innerHTML = "";
+    panel.chromeGroup.innerHTML = "";
+
+    var x = scaleLinear(wi.viewDomain, [0, innerW]);
+    var y = scaleLinear(wi.psiYDomain, [innerH, 0]);
+    panel.x = x; panel.y = y; panel.innerW = innerW; panel.innerH = innerH;
+
+    var yTicks = niceTicks(wi.psiYDomain[0], wi.psiYDomain[1], 4);
+    yTicks.forEach(function (t) {
+      panel.gridGroup.appendChild(svgEl("line", { x1: 0, x2: innerW, y1: y(t), y2: y(t), stroke: "var(--grid)", "stroke-width": 1 }));
+      var lbl = svgEl("text", { class: "axis-label", x: -6, y: y(t) + 3, "text-anchor": "end" });
+      lbl.textContent = Math.round(t);
+      panel.chromeGroup.appendChild(lbl);
+    });
+
+    var timeTickInfo = timeTicks(wi.viewDomain, innerW);
+    var useDateTicks = timeTickInfo.stepMs >= ONE_DAY_MS;
+    timeTickInfo.ticks.forEach(function (t) {
+      var xp = x(t);
+      panel.gridGroup.appendChild(svgEl("line", { x1: xp, x2: xp, y1: 0, y2: innerH, stroke: "var(--grid)", "stroke-width": 1 }));
+      panel.chromeGroup.appendChild(svgEl("line", { x1: xp, x2: xp, y1: innerH, y2: innerH + 4, stroke: "var(--faint)", "stroke-width": 1 }));
+      var lbl = svgEl("text", { class: "axis-label", x: xp, y: innerH + 15, "text-anchor": "middle" });
+      lbl.textContent = useDateTicks ? fmtAxisDate(t) : fmtSGT(t);
+      panel.chromeGroup.appendChild(lbl);
+    });
+
+    THRESHOLDS.forEach(function (th) {
+      if (th < wi.psiYDomain[0] || th > wi.psiYDomain[1]) return;
+      panel.plot.appendChild(svgEl("line", { x1: 0, x2: innerW, y1: y(th), y2: y(th), stroke: "var(--faint)", "stroke-width": 1 }));
+      var lbl = svgEl("text", { class: "threshold-label", x: innerW - 2, y: y(th) - 3, "text-anchor": "end" });
+      lbl.textContent = "PSI " + th;
+      panel.chromeGroup.appendChild(lbl);
+    });
+
+    var lowPts = wi.lowSeries.map(function (p) { return { t: Date.parse(p.t), psi: p.psi }; });
+    var highPts = wi.highSeries.map(function (p) { return { t: Date.parse(p.t), psi: p.psi }; });
+
+    // Shaded band between the low and high scenario -- a closed polygon
+    // tracing the low line left-to-right then the high line back right-to-left.
+    var bandPts = lowPts.map(function (p) { return x(p.t).toFixed(1) + "," + y(p.psi).toFixed(1); })
+      .concat(highPts.slice().reverse().map(function (p) { return x(p.t).toFixed(1) + "," + y(p.psi).toFixed(1); }));
+    panel.plot.appendChild(svgEl("polygon", { points: bandPts.join(" "), fill: "var(--whatif-band)", stroke: "none" }));
+
+    panel.plot.appendChild(svgEl("path", {
+      d: linePath(lowPts, x, y, "t", "psi"), fill: "none", stroke: "var(--whatif-line)",
+      "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round"
+    }));
+    panel.plot.appendChild(svgEl("path", {
+      d: linePath(highPts, x, y, "t", "psi"), fill: "none", stroke: "var(--whatif-line)",
+      "stroke-width": 2, "stroke-dasharray": "6 4", "stroke-linejoin": "round", "stroke-linecap": "round"
+    }));
+    if (lowPts.length <= MAX_MARKER_POINTS * 2) {
+      drawMarkers(panel.plot, lowPts, x, y, "t", "psi", "var(--whatif-line)", 1);
+      drawMarkers(panel.plot, highPts, x, y, "t", "psi", "var(--whatif-line)", 0.6);
+    }
+
+    var crosshair = svgEl("line", { x1: -10, x2: -10, y1: 0, y2: innerH, stroke: "var(--faint)", "stroke-width": 1, visibility: "hidden" });
+    panel.chromeGroup.appendChild(crosshair);
+    panel.crosshair = crosshair;
+  }
+
+  function wiClampViewDomain(domain) {
+    var full = wi.fullDomain;
+    var span = Math.min(domain[1] - domain[0], full[1] - full[0]);
+    span = Math.max(span, MIN_SPAN_MS);
+    var lo = domain[0], hi = lo + span;
+    if (lo < full[0]) { lo = full[0]; hi = lo + span; }
+    if (hi > full[1]) { hi = full[1]; lo = hi - span; }
+    return [lo, hi];
+  }
+
+  function wiLocalXFromClientX(svg, clientX) {
+    var rect = svg.getBoundingClientRect();
+    var scale = wi.width / rect.width;
+    return (clientX - rect.left) * scale - MARGIN.left;
+  }
+
+  function wiZoomAtLocalX(panel, localX, factor) {
+    var frac = Math.max(0, Math.min(1, localX / panel.innerW));
+    var cursorT = wi.viewDomain[0] + frac * (wi.viewDomain[1] - wi.viewDomain[0]);
+    var span = (wi.viewDomain[1] - wi.viewDomain[0]) * factor;
+    var lo = cursorT - frac * span, hi = lo + span;
+    wi.viewDomain = wiClampViewDomain([lo, hi]);
+    wiRenderAll();
+  }
+
+  function wiAttachInteraction(panel) {
+    var svg = panel.svg;
+    var pointers = {};
+    var dragState = null;
+    var pinchState = null;
+
+    function activeIds() { return Object.keys(pointers); }
+    function distanceBetween(idA, idB) {
+      var a = pointers[idA], b = pointers[idB];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+    function midpointX(idA, idB) { return (pointers[idA].x + pointers[idB].x) / 2; }
+
+    svg.addEventListener("pointerdown", function (evt) {
+      evt.preventDefault();
+      try { svg.setPointerCapture(evt.pointerId); } catch (e) { /* nice-to-have */ }
+      pointers[evt.pointerId] = { x: evt.clientX, y: evt.clientY };
+      var ids = activeIds();
+      if (ids.length === 2) {
+        dragState = null;
+        pinchState = { ids: ids, lastDist: distanceBetween(ids[0], ids[1]) };
+        svg.classList.remove("dragging");
+        panel.tapStart = null;
+      } else if (ids.length === 1) {
+        pinchState = null;
+        svg.classList.add("dragging");
+        dragState = { startX: evt.clientX, startDomain: wi.viewDomain.slice() };
+        panel.tapStart = { x: evt.clientX, y: evt.clientY };
+      }
+    });
+
+    svg.addEventListener("pointermove", function (evt) {
+      if (!(evt.pointerId in pointers)) { wiHandleHover(panel, evt); return; }
+      pointers[evt.pointerId] = { x: evt.clientX, y: evt.clientY };
+      if (panel.tapStart && Math.hypot(evt.clientX - panel.tapStart.x, evt.clientY - panel.tapStart.y) > TAP_MAX_MOVE_PX) {
+        panel.tapStart = null;
+      }
+      if (pinchState) {
+        evt.preventDefault();
+        var ids = pinchState.ids;
+        if (!(ids[0] in pointers) || !(ids[1] in pointers)) return;
+        var dist = distanceBetween(ids[0], ids[1]);
+        if (pinchState.lastDist > 0 && dist > 0) {
+          wiZoomAtLocalX(panel, wiLocalXFromClientX(svg, midpointX(ids[0], ids[1])), pinchState.lastDist / dist);
+        }
+        pinchState.lastDist = dist;
+        return;
+      }
+      if (dragState) {
+        evt.preventDefault();
+        var scale = wi.width / svg.getBoundingClientRect().width;
+        var pxPerMs = panel.innerW / (dragState.startDomain[1] - dragState.startDomain[0]);
+        var dxPx = (evt.clientX - dragState.startX) * scale;
+        var dtMs = dxPx / pxPerMs;
+        wi.viewDomain = wiClampViewDomain([dragState.startDomain[0] - dtMs, dragState.startDomain[1] - dtMs]);
+        wiRenderAll();
+        return;
+      }
+      wiHandleHover(panel, evt);
+    });
+
+    function endPointer(evt) {
+      try { svg.releasePointerCapture(evt.pointerId); } catch (e) { /* already released */ }
+      delete pointers[evt.pointerId];
+      var ids = activeIds();
+      var wasTap = evt.type === "pointerup" && !pinchState && panel.tapStart && ids.length === 0;
+      if (pinchState) {
+        if (ids.length < 2) {
+          pinchState = null;
+          if (ids.length === 1) {
+            dragState = { startX: pointers[ids[0]].x, startDomain: wi.viewDomain.slice() };
+            svg.classList.add("dragging");
+          } else {
+            svg.classList.remove("dragging");
+          }
+        }
+      } else if (dragState && ids.length === 0) {
+        dragState = null;
+        svg.classList.remove("dragging");
+      }
+      if (wasTap) {
+        panel.tapStart = null;
+        wiSelectPoint(panel, evt);
+      }
+    }
+    svg.addEventListener("pointerup", endPointer);
+    svg.addEventListener("pointercancel", endPointer);
+    svg.addEventListener("pointerleave", function () {
+      if (wi.pinned) return;
+      wi.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
+      els.tooltip.hidden = true;
+    });
+
+    svg.addEventListener("wheel", function (evt) {
+      evt.preventDefault();
+      var factor = evt.deltaY > 0 ? 1.15 : 1 / 1.15;
+      wiZoomAtLocalX(panel, wiLocalXFromClientX(svg, evt.clientX), factor);
+    }, { passive: false });
+  }
+
+  function wiHandleHover(panel, evt) {
+    if (wi.pinned) return;
+    wiShowReadingsAt(wiTMsFromClientX(panel, evt.clientX), evt);
+  }
+
+  function wiSelectPoint(panel, evt) {
+    wi.pinned = true;
+    wiShowReadingsAt(wiTMsFromClientX(panel, evt.clientX), evt);
+  }
+
+  function wiTMsFromClientX(panel, clientX) {
+    var localX = wiLocalXFromClientX(panel.svg, clientX);
+    var clampedX = Math.max(0, Math.min(panel.innerW, localX));
+    return wi.viewDomain[0] + (clampedX / panel.innerW) * (wi.viewDomain[1] - wi.viewDomain[0]);
+  }
+
+  function wiNearest(series, tMs) {
+    var nearest = null, bestDiff = Infinity;
+    series.forEach(function (p) {
+      var diff = Math.abs(Date.parse(p.t) - tMs);
+      if (diff < bestDiff) { bestDiff = diff; nearest = p; }
+    });
+    return nearest;
+  }
+
+  function wiShowReadingsAt(tMs, evt) {
+    wi.panels.forEach(function (p) {
+      var cx = p.x ? p.x(tMs) : -10;
+      if (p.crosshair) {
+        p.crosshair.setAttribute("x1", cx);
+        p.crosshair.setAttribute("x2", cx);
+        p.crosshair.setAttribute("visibility", "visible");
+      }
+    });
+    var low = wiNearest(wi.lowSeries, tMs);
+    var high = wiNearest(wi.highSeries, tMs);
+    if (!low || !high) return;
+    wiShowTooltip(evt, low, high);
+  }
+
+  function wiShowTooltip(evt, low, high) {
+    els.tooltip.innerHTML = "";
+    var timeRow = document.createElement("div");
+    timeRow.className = "row";
+    var k0 = document.createElement("span"); k0.className = "k"; k0.textContent = "Time";
+    var v0 = document.createElement("span"); v0.className = "v"; v0.textContent = fmtDateTime(Date.parse(low.t));
+    timeRow.appendChild(k0); timeRow.appendChild(v0);
+    els.tooltip.appendChild(timeRow);
+
+    [["Low", low], ["High", high]].forEach(function (pair) {
+      var row = document.createElement("div");
+      row.className = "row";
+      var k = document.createElement("span"); k.className = "k"; k.textContent = pair[0];
+      var v = document.createElement("span"); v.className = "v"; v.textContent = "PSI " + Math.round(pair[1].psi);
+      row.appendChild(k); row.appendChild(v);
+      els.tooltip.appendChild(row);
+    });
+
+    els.tooltip.hidden = false;
+    var left = evt.clientX + 14;
+    if (left + 220 > window.innerWidth) left = evt.clientX - 220 - 14;
+    els.tooltip.style.left = left + "px";
+    els.tooltip.style.top = (evt.clientY + 14) + "px";
+  }
+
+  function wiBuildTable() {
+    els.tableBodyWhatif.innerHTML = "";
+    for (var i = 0; i < wi.lowSeries.length; i++) {
+      var tr = document.createElement("tr");
+      appendCell(tr, fmtDateTime(Date.parse(wi.lowSeries[i].t)));
+      appendCell(tr, Math.round(wi.lowSeries[i].psi));
+      appendCell(tr, Math.round(wi.highSeries[i].psi));
+      els.tableBodyWhatif.appendChild(tr);
+    }
+  }
+
+  function wiInit() {
+    function go() {
+      wiPopulateDefaults();
+      wiCalculate();
+    }
+    if (state.data) {
+      go();
+    } else {
+      els.subtitleWhatif.textContent = "Waiting for live data to load…";
+      onLiveDataReady.push(go);
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // Tabs + init
   // ---------------------------------------------------------------------
   function activateTab(name) {
@@ -1988,20 +2537,25 @@ INDEX_HTML = r"""<!doctype html>
     state.pinned = false;
     estate.pinned = false;
     h15.pinned = false;
+    wi.pinned = false;
     els.tooltip.hidden = true;
     state.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
     estate.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
     h15.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
+    wi.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
 
     document.getElementById("tab-panel-live").hidden = name !== "live";
     document.getElementById("tab-panel-episodes").hidden = name !== "episodes";
     document.getElementById("tab-panel-h15").hidden = name !== "h15";
+    document.getElementById("tab-panel-whatif").hidden = name !== "whatif";
     els.tabBtnLive.classList.toggle("active", name === "live");
     els.tabBtnEpi.classList.toggle("active", name === "episodes");
     els.tabBtnH15.classList.toggle("active", name === "h15");
+    els.tabBtnWhatif.classList.toggle("active", name === "whatif");
     els.tabBtnLive.setAttribute("aria-selected", name === "live" ? "true" : "false");
     els.tabBtnEpi.setAttribute("aria-selected", name === "episodes" ? "true" : "false");
     els.tabBtnH15.setAttribute("aria-selected", name === "h15" ? "true" : "false");
+    els.tabBtnWhatif.setAttribute("aria-selected", name === "whatif" ? "true" : "false");
 
     if (name === "live") {
       measureWidth();
@@ -2021,6 +2575,14 @@ INDEX_HTML = r"""<!doctype html>
       } else {
         h15MeasureWidth();
         h15RenderAll();
+      }
+    } else if (name === "whatif") {
+      if (!wi.initialized) {
+        wi.initialized = true;
+        wiInit();
+      } else {
+        wiMeasureWidth();
+        wiRenderAll();
       }
     }
   }
@@ -2054,6 +2616,18 @@ INDEX_HTML = r"""<!doctype html>
     els.toggleTableBtnH15 = document.getElementById("toggle-table-h15");
     els.tableWrapH15 = document.getElementById("table-wrap-h15");
     els.tableBodyH15 = document.getElementById("data-table-body-h15");
+    els.tabBtnWhatif = document.getElementById("tab-btn-whatif");
+    els.subtitleWhatif = document.getElementById("subtitle-whatif");
+    els.wiPsiLow = document.getElementById("whatif-psi-low");
+    els.wiPsiHigh = document.getElementById("whatif-psi-high");
+    els.wiPmLow = document.getElementById("whatif-pm-low");
+    els.wiPmHigh = document.getElementById("whatif-pm-high");
+    els.whatifSubmit = document.getElementById("whatif-submit");
+    els.whatifError = document.getElementById("whatif-error");
+    els.resetBtnWhatif = document.getElementById("reset-view-whatif");
+    els.toggleTableBtnWhatif = document.getElementById("toggle-table-whatif");
+    els.tableWrapWhatif = document.getElementById("table-wrap-whatif");
+    els.tableBodyWhatif = document.getElementById("data-table-body-whatif");
 
     els.refreshBtn.addEventListener("click", function () {
       location.reload();
@@ -2072,6 +2646,7 @@ INDEX_HTML = r"""<!doctype html>
     els.tabBtnLive.addEventListener("click", function () { activateTab("live"); });
     els.tabBtnEpi.addEventListener("click", function () { activateTab("episodes"); });
     els.tabBtnH15.addEventListener("click", function () { activateTab("h15"); });
+    els.tabBtnWhatif.addEventListener("click", function () { activateTab("whatif"); });
     els.selectEpi.addEventListener("change", function () { epiSelectEpisode(els.selectEpi.value); });
     els.resetBtnEpi.addEventListener("click", function () {
       if (!estate.episode) return;
@@ -2097,6 +2672,19 @@ INDEX_HTML = r"""<!doctype html>
       els.tableWrapH15.hidden = !hidden;
       els.toggleTableBtnH15.textContent = hidden ? "Hide data table" : "View data table";
     });
+    els.whatifSubmit.addEventListener("click", wiCalculate);
+    els.resetBtnWhatif.addEventListener("click", function () {
+      if (!wi.fullDomain) return;
+      wi.viewDomain = wi.fullDomain.slice();
+      wi.pinned = false;
+      els.tooltip.hidden = true;
+      wiRenderAll();
+    });
+    els.toggleTableBtnWhatif.addEventListener("click", function () {
+      var hidden = els.tableWrapWhatif.hidden;
+      els.tableWrapWhatif.hidden = !hidden;
+      els.toggleTableBtnWhatif.textContent = hidden ? "Hide data table" : "View data table";
+    });
 
     window.addEventListener("resize", debounce(function () {
       if (activeTab === "live") {
@@ -2108,6 +2696,9 @@ INDEX_HTML = r"""<!doctype html>
       } else if (activeTab === "h15" && h15.initialized) {
         h15MeasureWidth();
         h15RenderAll();
+      } else if (activeTab === "whatif" && wi.initialized) {
+        wiMeasureWidth();
+        wiRenderAll();
       }
     }, 150));
 
@@ -2134,6 +2725,13 @@ INDEX_HTML = r"""<!doctype html>
       h15.pinned = false;
       els.tooltip.hidden = true;
       h15.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
+    });
+    document.addEventListener("pointerdown", function (evt) {
+      if (!wi.pinned) return;
+      if (evt.target.closest && evt.target.closest("#tab-panel-whatif")) return;
+      wi.pinned = false;
+      els.tooltip.hidden = true;
+      wi.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
     });
 
     fetch("data.json", { cache: "no-store" })
@@ -2166,6 +2764,11 @@ INDEX_HTML = r"""<!doctype html>
         buildPanel("chart-pm25", false);
         buildPanel("chart-psi", true);
         renderAll();
+
+        // Let the What-if Projection tab populate its defaults/first
+        // calculation if it was opened before this fetch resolved.
+        onLiveDataReady.forEach(function (fn) { fn(); });
+        onLiveDataReady = [];
       })
       .catch(function (err) {
         els.subtitle.textContent = "Failed to load data.json";
