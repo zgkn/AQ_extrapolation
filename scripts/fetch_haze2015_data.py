@@ -88,12 +88,25 @@ def download_csv(url: str) -> list[dict]:
     return rows
 
 
+SGT = dt.timezone(dt.timedelta(hours=8))
+
+# Confirmed against a real poll-download response: this dataset's first
+# column is headered with the metric name (e.g. "1hr_pm25"/"24hr_psi")
+# rather than literally "timestamp", and its values are D/M/YYYY H:MM --
+# no leading zeros, bare SGT, not ISO 8601 (e.g. "1/4/2014 1:00"). The
+# ISO fallback is defensive in case NEA ever changes the export format.
+_TS_FORMATS = ("%d/%m/%Y %H:%M",)
+
+
 def parse_ts(ts_str: str) -> dt.datetime:
-    """These datasets' timestamps are bare SGT (no UTC offset) -- attach
-    +08:00 explicitly so every datetime in this project stays tz-aware."""
+    for fmt in _TS_FORMATS:
+        try:
+            return dt.datetime.strptime(ts_str, fmt).replace(tzinfo=SGT)
+        except ValueError:
+            continue
     ts = dt.datetime.fromisoformat(ts_str)
     if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=dt.timezone(dt.timedelta(hours=8)))
+        ts = ts.replace(tzinfo=SGT)
     return ts
 
 
