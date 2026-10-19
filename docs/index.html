@@ -386,7 +386,7 @@
     </div>
 
     <div class="chart-card" id="chart-card-whatif">
-      <div class="panel-title">PM2.5 (&micro;g/m&sup3;, 24-hr avg-equivalent) &mdash; what the PSI projection below is actually running on</div>
+      <div class="panel-title">PM2.5 (&micro;g/m&sup3;, 1-hr) &mdash; the flat value assumed from each point onward; steps immediately at an injection (the PSI below is its 24-hr rolling average, so it catches up over 24h instead)</div>
       <svg class="chart" id="chart-pm25-whatif"></svg>
       <div class="panel-title">PSI (24-hr) &mdash; projected hourly over the next 3 days (through the end of that final day), holding the entered 1-hr PM2.5 range flat</div>
       <svg class="chart" id="chart-psi-whatif"></svg>
@@ -396,7 +396,7 @@
       <button id="toggle-table-whatif" type="button">View data table</button>
       <div class="table-wrap" id="table-wrap-whatif" hidden>
         <table class="data-table" id="data-table-whatif">
-          <thead><tr><th>Time (SGT)</th><th>PM2.5 (low)</th><th>PM2.5 (high)</th><th>PSI (low)</th><th>PSI (high)</th></tr></thead>
+          <thead><tr><th>Time (SGT)</th><th>PM2.5 1h (low)</th><th>PM2.5 1h (high)</th><th>PSI (low)</th><th>PSI (high)</th></tr></thead>
           <tbody id="data-table-body-whatif"></tbody>
         </table>
       </div>
@@ -2026,7 +2026,7 @@
   var wi = {
     nowMs: null,        // anchor time for the projection (the Live dashboard's latest-reading timestamp)
     hours: null,         // actual projection length in hours (>= WHATIF_HOURS, rounded up to end-of-day SGT)
-    lowSeries: null,     // [{t, avgPm25, psi}]
+    lowSeries: null,     // [{t, avgPm25, psi, latest1h}]
     highSeries: null,
     injections: [],      // [{idx, which}] -- points where the user has injected a new value, for the chart markers
     fullDomain: null,
@@ -2118,8 +2118,11 @@
       // just the derived PSI, so a later wiInjectAt() has the right
       // starting baseline to re-anchor the flat-hold formula from -- the
       // same role the live dashboard's own "baseline" plays at hour 0.
-      lowSeries.push({ t: tIso, avgPm25: avgLow, psi: pm25ToPsi(avgLow) });
-      highSeries.push({ t: tIso, avgPm25: avgHigh, psi: pm25ToPsi(avgHigh) });
+      // latest1h is the actual 1-hr reading the model assumes holds flat --
+      // constant at pmLow/pmHigh until an injection changes it (a step,
+      // not a ramp: unlike the 24-hr average, there's no "window" to fill).
+      lowSeries.push({ t: tIso, avgPm25: avgLow, psi: pm25ToPsi(avgLow), latest1h: pmLow });
+      highSeries.push({ t: tIso, avgPm25: avgHigh, psi: pm25ToPsi(avgHigh), latest1h: pmHigh });
     }
     wi.lowSeries = lowSeries;
     wi.highSeries = highSeries;
@@ -2141,26 +2144,29 @@
 
   function wiComputeYDomain() {
     var psiVals = [0].concat(THRESHOLDS), pm25Vals = [0];
-    wi.lowSeries.forEach(function (p) { psiVals.push(p.psi); pm25Vals.push(p.avgPm25); });
-    wi.highSeries.forEach(function (p) { psiVals.push(p.psi); pm25Vals.push(p.avgPm25); });
+    wi.lowSeries.forEach(function (p) { psiVals.push(p.psi); pm25Vals.push(p.latest1h); });
+    wi.highSeries.forEach(function (p) { psiVals.push(p.psi); pm25Vals.push(p.latest1h); });
     var psiTicks = niceTicks(Math.min.apply(null, psiVals), Math.max.apply(null, psiVals), 4);
     var pm25Ticks = niceTicks(Math.min.apply(null, pm25Vals), Math.max.apply(null, pm25Vals), 4);
     wi.psiYDomain = [psiTicks[0], psiTicks[psiTicks.length - 1]];
     wi.pm25YDomain = [pm25Ticks[0], pm25Ticks[pm25Ticks.length - 1]];
   }
 
-  // Injects a new "hold flat from here" PM2.5 value at hour `idx` on the
-  // low or high line, and recomputes every hour after it -- points before
-  // idx are untouched. Re-anchors the exact same flat-hold formula used by
-  // wiCalculate()/the Live dashboard, just starting from this hour's own
-  // avgPm25 (its actual 24-hr-average-equivalent so far) as the new
-  // baseline instead of hour 0's.
+  // Injects a new "hold flat from here" 1-hr PM2.5 value at hour `idx` on
+  // the low or high line. Two different things change, on two different
+  // timelines:
+  //   - latest1h is the actual 1-hr reading -- it steps to the new value
+  //     immediately at idx and stays there (no "window" to fill, so no ramp).
+  //   - avgPm25 (and the psi derived from it) is the 24-hr rolling average,
+  //     which re-anchors the same flat-hold formula wiCalculate() uses,
+  //     starting from this hour's own avgPm25 as the new baseline instead
+  //     of hour 0's -- it only fully catches up to the new value 24h later.
   function wiInjectAt(which, idx) {
     var series = which === "low" ? wi.lowSeries : wi.highSeries;
     var point = series[idx];
     var input = window.prompt(
       "New 1-hr PM2.5 (µg/m³) to hold flat from " + fmtDateTime(Date.parse(point.t)) + " onward:",
-      point.avgPm25.toFixed(1)
+      point.latest1h.toFixed(1)
     );
     if (input === null) return; // cancelled
     var newLatest = parseFloat(input);
@@ -2175,6 +2181,7 @@
       var avg = dt === 0 ? baseline : (dt <= 24 ? projectedAvgPm25(baseline, newLatest, dt) : newLatest);
       series[i].avgPm25 = avg;
       series[i].psi = pm25ToPsi(avg);
+      series[i].latest1h = newLatest;
     }
     wi.injections.push({ idx: idx, which: which });
 
@@ -2210,7 +2217,7 @@
     panel.plot.innerHTML = "";
     panel.chromeGroup.innerHTML = "";
 
-    var field = panel.isPsi ? "psi" : "avgPm25";
+    var field = panel.isPsi ? "psi" : "latest1h";
     var yDomain = panel.isPsi ? wi.psiYDomain : wi.pm25YDomain;
     var x = scaleLinear(wi.viewDomain, [0, innerW]);
     var y = scaleLinear(yDomain, [innerH, 0]);
@@ -2467,7 +2474,7 @@
       row.className = "row";
       var k = document.createElement("span"); k.className = "k"; k.textContent = pair[0];
       var v = document.createElement("span"); v.className = "v";
-      v.textContent = "PSI " + Math.round(pair[1].psi) + " / PM " + pair[1].avgPm25.toFixed(1);
+      v.textContent = "PSI " + Math.round(pair[1].psi) + " / PM " + pair[1].latest1h.toFixed(1);
       row.appendChild(k); row.appendChild(v);
       els.tooltip.appendChild(row);
     });
@@ -2506,8 +2513,8 @@
     for (var i = 0; i < wi.lowSeries.length; i++) {
       var tr = document.createElement("tr");
       appendCell(tr, fmtDateTime(Date.parse(wi.lowSeries[i].t)));
-      appendCell(tr, wi.lowSeries[i].avgPm25.toFixed(1));
-      appendCell(tr, wi.highSeries[i].avgPm25.toFixed(1));
+      appendCell(tr, wi.lowSeries[i].latest1h.toFixed(1));
+      appendCell(tr, wi.highSeries[i].latest1h.toFixed(1));
       appendCell(tr, Math.round(wi.lowSeries[i].psi));
       appendCell(tr, Math.round(wi.highSeries[i].psi));
       els.tableBodyWhatif.appendChild(tr);
