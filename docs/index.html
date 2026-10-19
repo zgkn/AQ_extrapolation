@@ -2022,6 +2022,13 @@
   // pmHigh) -- no need to enumerate all four corner combinations.
   // ---------------------------------------------------------------------
   var WHATIF_HOURS = 72; // nominal 3 days -- see wiEndHours() for why the actual span usually runs a bit longer
+  // Starting the view at the full ~3-4 day domain leaves nothing to pan or
+  // zoom out to -- both are no-ops when viewDomain already equals
+  // fullDomain, which looks like pan/zoom are broken. Default to the first
+  // 48h instead (mirrors the live dashboard's own default-vs-full-history
+  // split), so panning right and zooming out immediately do something; the
+  // rest of the projection is still just a pan/zoom away.
+  var WHATIF_DEFAULT_VIEW_MS = 48 * 3600 * 1000;
 
   var wi = {
     nowMs: null,        // anchor time for the projection (the Live dashboard's latest-reading timestamp)
@@ -2051,6 +2058,11 @@
     var dayEndMs = (localDayStart + 23 * 3600 * 1000) - SG_OFFSET_MS;
     var endMs = Math.max(roughEndMs, dayEndMs);
     return Math.round((endMs - nowMs) / 3600000);
+  }
+
+  function wiDefaultViewDomain() {
+    var full = wi.fullDomain;
+    return [full[0], Math.min(full[1], full[0] + WHATIF_DEFAULT_VIEW_MS)];
   }
 
   function wiMeasureWidth() {
@@ -2128,7 +2140,7 @@
     wi.highSeries = highSeries;
     wi.injections = []; // [{idx, which}] -- cleared on every fresh Calculate
     wi.fullDomain = [wi.nowMs, wi.nowMs + wi.hours * 3600 * 1000];
-    wi.viewDomain = wi.fullDomain.slice();
+    wi.viewDomain = wiDefaultViewDomain();
     wi.pinned = false;
     els.tooltip.hidden = true;
     wiComputeYDomain();
@@ -2683,7 +2695,7 @@
     els.whatifSubmit.addEventListener("click", wiCalculate);
     els.resetBtnWhatif.addEventListener("click", function () {
       if (!wi.fullDomain) return;
-      wi.viewDomain = wi.fullDomain.slice();
+      wi.viewDomain = wiDefaultViewDomain();
       wi.pinned = false;
       els.tooltip.hidden = true;
       wiRenderAll();
