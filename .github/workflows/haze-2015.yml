@@ -1,0 +1,67 @@
+name: Singapore 2015 Haze (Jun-Nov)
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: haze-2015
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # continue-on-error so a crash here (or in the build step below) never
+      # skips the commit step and discards whatever was fetched/built
+      # earlier in this same run -- same reasoning as the other workflows.
+      - name: Fetch 2015 historical PM2.5 + PSI (Jun-Nov)
+        id: fetch_2015
+        continue-on-error: true
+        run: python scripts/fetch_haze2015_data.py
+
+      - name: Build docs/haze2015/data.json
+        id: build_2015
+        continue-on-error: true
+        run: python scripts/build_haze2015_page.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for f in data/haze2015_history.csv docs/haze2015/data.json; do
+            [ -e "$f" ] && git add "$f"
+          done
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Update 2015 haze data [skip ci]"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          for i in 1 2 3 4; do
+            git push origin "HEAD:${GITHUB_REF_NAME}" && break
+            echo "Push failed, retrying ($i)..."
+            sleep $((i * 3))
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+          done
+
+      - name: Fail job if the fetch or build step failed
+        if: steps.fetch_2015.outcome == 'failure' || steps.build_2015.outcome == 'failure'
+        run: |
+          echo "The fetch and/or build step failed; whatever data existed was still committed above. See that step's log."
+          exit 1

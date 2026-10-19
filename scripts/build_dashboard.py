@@ -321,6 +321,7 @@ INDEX_HTML = r"""<!doctype html>
   <div class="tabs" role="tablist">
     <button class="tab-btn active" id="tab-btn-live" type="button" role="tab" aria-selected="true">Live dashboard</button>
     <button class="tab-btn" id="tab-btn-episodes" type="button" role="tab" aria-selected="false">Past episodes</button>
+    <button class="tab-btn" id="tab-btn-h15" type="button" role="tab" aria-selected="false">2015 Haze</button>
   </div>
 
   <div id="tab-panel-live">
@@ -398,6 +399,36 @@ INDEX_HTML = r"""<!doctype html>
     </div>
   </div>
 
+  <div id="tab-panel-h15" hidden>
+    <p class="subtitle" id="subtitle-h15">Loading&hellip;</p>
+
+    <div class="toolbar">
+      <span>Drag to pan &middot; scroll or pinch to zoom &middot; tap a point for readings</span>
+      <button id="reset-view-h15" type="button">Reset view</button>
+    </div>
+
+    <div class="legend" id="legend-h15"></div>
+
+    <div class="chart-card" id="chart-card-h15">
+      <div class="panel-title">PM2.5 (&micro;g/m&sup3;, 1-hr)</div>
+      <svg class="chart" id="chart-pm25-h15"></svg>
+      <div class="panel-title">PSI (24-hr)</div>
+      <svg class="chart" id="chart-psi-h15"></svg>
+    </div>
+
+    <div class="table-section">
+      <button id="toggle-table-h15" type="button">View data table</button>
+      <div class="table-wrap" id="table-wrap-h15" hidden>
+        <table class="data-table" id="data-table-h15">
+          <thead>
+            <tr><th>Time (SGT)</th><th>Region</th><th>PSI</th><th>PM2.5 1h</th></tr>
+          </thead>
+          <tbody id="data-table-body-h15"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <footer>
     Model note: PSI here tracks only the PM2.5 sub-index (real PSI = max of six pollutant
     sub-indices: PM2.5, PM10, SO2, CO, O3, NO2), so on a day another pollutant dominates the
@@ -405,7 +436,9 @@ INDEX_HTML = r"""<!doctype html>
     assumes each region's latest 1-hr PM2.5 reading holds perfectly flat for up to 24h -- a
     simplification for a quick "if nothing changes" read, not a forecast. An episode (Past
     episodes tab) is a contiguous stretch where a region's 24-hr PSI was above the threshold
-    shown there; each chart pads 24h before/after for context. Data: data.gov.sg.
+    shown there; each chart pads 24h before/after for context. The 2015 Haze tab shows actual
+    readings only (no projection) from NEA's historical PM2.5/PSI datasets, 1 Jun&ndash;30 Nov
+    2015. Data: data.gov.sg.
   </footer>
 </main>
 
@@ -1552,36 +1585,443 @@ INDEX_HTML = r"""<!doctype html>
   }
 
   // ---------------------------------------------------------------------
+  // 2015 Haze tab -- fetches docs/haze2015/data.json lazily, the first
+  // time this tab is opened (written by a separate, manually-triggered
+  // one-off pipeline -- see fetch_haze2015_data.py/build_haze2015_page.py).
+  // Structurally like the live dashboard tab (multi-region overlay on two
+  // panels) but with no projection and no threshold reference lines: this
+  // is purely historical, so there's nothing to forecast.
+  // ---------------------------------------------------------------------
+  var h15 = {
+    data: null,
+    fullDomain: null,
+    viewDomain: null,
+    pm25YDomain: null,
+    psiYDomain: null,
+    panels: [],
+    width: 860,
+    pinned: false,
+    initialized: false,
+  };
+
+  function h15MeasureWidth() {
+    var card = document.getElementById("chart-card-h15");
+    if (!card) return;
+    h15.width = Math.max(280, card.clientWidth - 24);
+  }
+
+  function h15BuildLegend(colors) {
+    els.legendH15.innerHTML = "";
+    Object.keys(colors).forEach(function (region) {
+      var span = document.createElement("span");
+      span.className = "key";
+      var sw = document.createElement("span");
+      sw.className = "swatch";
+      sw.style.background = colors[region];
+      var label = document.createElement("span");
+      label.textContent = capitalize(region);
+      span.appendChild(sw);
+      span.appendChild(label);
+      els.legendH15.appendChild(span);
+    });
+  }
+
+  function h15ComputeYDomains() {
+    var pm25Vals = [0], psiVals = [0];
+    Object.keys(h15.data.regions).forEach(function (region) {
+      h15.data.regions[region].history.forEach(function (h) {
+        if (h.pm25_1h !== null) pm25Vals.push(h.pm25_1h);
+        if (h.psi !== null) psiVals.push(h.psi);
+      });
+    });
+    var pm25Ticks = niceTicks(Math.min.apply(null, pm25Vals), Math.max.apply(null, pm25Vals), 4);
+    var psiTicks = niceTicks(Math.min.apply(null, psiVals), Math.max.apply(null, psiVals), 4);
+    h15.pm25YDomain = [pm25Ticks[0], pm25Ticks[pm25Ticks.length - 1]];
+    h15.psiYDomain = [psiTicks[0], psiTicks[psiTicks.length - 1]];
+  }
+
+  function h15BuildPanel(id, isPsi) { return buildPanelGeneric(id, isPsi, h15.panels, h15AttachInteraction); }
+
+  function h15RenderAll() {
+    if (!h15.data) return;
+    h15.panels.forEach(h15RenderPanel);
+  }
+
+  function h15RenderPanel(panel) {
+    var W = h15.width, H = panelHeight(panel.isPsi);
+    var innerW = W - MARGIN.left - MARGIN.right;
+    var innerH = panelInnerH(panel.isPsi);
+
+    panel.svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    panel.svg.setAttribute("width", W);
+    panel.svg.setAttribute("height", H);
+    panel.g.setAttribute("transform", "translate(" + MARGIN.left + "," + MARGIN.top + ")");
+    panel.clipRect.setAttribute("x", -2);
+    panel.clipRect.setAttribute("y", -2);
+    panel.clipRect.setAttribute("width", innerW + 4);
+    panel.clipRect.setAttribute("height", innerH + 4);
+
+    panel.gridGroup.innerHTML = "";
+    panel.plot.innerHTML = "";
+    panel.chromeGroup.innerHTML = "";
+
+    var x = scaleLinear(h15.viewDomain, [0, innerW]);
+    var yDomain = panel.isPsi ? h15.psiYDomain : h15.pm25YDomain;
+    var y = scaleLinear(yDomain, [innerH, 0]);
+    panel.x = x; panel.y = y; panel.innerW = innerW; panel.innerH = innerH;
+
+    var yTicks = niceTicks(yDomain[0], yDomain[1], 4);
+    yTicks.forEach(function (t) {
+      panel.gridGroup.appendChild(svgEl("line", { x1: 0, x2: innerW, y1: y(t), y2: y(t), stroke: "var(--grid)", "stroke-width": 1 }));
+      var lbl = svgEl("text", { class: "axis-label", x: -6, y: y(t) + 3, "text-anchor": "end" });
+      lbl.textContent = Math.round(t);
+      panel.chromeGroup.appendChild(lbl);
+    });
+
+    var timeTickInfo = timeTicks(h15.viewDomain, innerW);
+    var useDateTicks = timeTickInfo.stepMs >= ONE_DAY_MS;
+    timeTickInfo.ticks.forEach(function (t) {
+      var xp = x(t);
+      panel.gridGroup.appendChild(svgEl("line", { x1: xp, x2: xp, y1: 0, y2: innerH, stroke: "var(--grid)", "stroke-width": 1 }));
+      if (panel.isPsi) {
+        panel.chromeGroup.appendChild(svgEl("line", { x1: xp, x2: xp, y1: innerH, y2: innerH + 4, stroke: "var(--faint)", "stroke-width": 1 }));
+        var lbl = svgEl("text", { class: "axis-label", x: xp, y: innerH + 15, "text-anchor": "middle" });
+        lbl.textContent = useDateTicks ? fmtAxisDate(t) : fmtSGT(t);
+        panel.chromeGroup.appendChild(lbl);
+      }
+    });
+
+    var colors = h15.data.colors;
+    var regions = Object.keys(h15.data.regions);
+
+    regions.forEach(function (region) {
+      var payload = h15.data.regions[region];
+      var color = colors[region];
+      var hist = payload.history.map(function (h) { return { t: Date.parse(h.t), psi: h.psi, pm25_1h: h.pm25_1h }; });
+      var field = panel.isPsi ? "psi" : "pm25_1h";
+      var path = svgEl("path", {
+        d: linePath(hist, x, y, "t", field), fill: "none", stroke: color,
+        "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round"
+      });
+      panel.plot.appendChild(path);
+
+      if (h15CountInView(hist, "t") <= MAX_MARKER_POINTS) {
+        drawMarkers(panel.plot, hist, x, y, "t", field, color, 1);
+      }
+    });
+
+    var crosshair = svgEl("line", { x1: -10, x2: -10, y1: 0, y2: innerH, stroke: "var(--faint)", "stroke-width": 1, visibility: "hidden" });
+    panel.chromeGroup.appendChild(crosshair);
+    panel.crosshair = crosshair;
+  }
+
+  function h15CountInView(points, xField) {
+    var lo = h15.viewDomain[0], hi = h15.viewDomain[1], n = 0;
+    for (var i = 0; i < points.length; i++) {
+      var t = points[i][xField];
+      if (t >= lo && t <= hi) n++;
+    }
+    return n;
+  }
+
+  function h15ClampViewDomain(domain) {
+    var full = h15.fullDomain;
+    var span = Math.min(domain[1] - domain[0], full[1] - full[0]);
+    span = Math.max(span, MIN_SPAN_MS);
+    var lo = domain[0], hi = lo + span;
+    if (lo < full[0]) { lo = full[0]; hi = lo + span; }
+    if (hi > full[1]) { hi = full[1]; lo = hi - span; }
+    return [lo, hi];
+  }
+
+  function h15LocalXFromClientX(svg, clientX) {
+    var rect = svg.getBoundingClientRect();
+    var scale = h15.width / rect.width;
+    return (clientX - rect.left) * scale - MARGIN.left;
+  }
+
+  function h15ZoomAtLocalX(panel, localX, factor) {
+    var frac = Math.max(0, Math.min(1, localX / panel.innerW));
+    var cursorT = h15.viewDomain[0] + frac * (h15.viewDomain[1] - h15.viewDomain[0]);
+    var span = (h15.viewDomain[1] - h15.viewDomain[0]) * factor;
+    var lo = cursorT - frac * span, hi = lo + span;
+    h15.viewDomain = h15ClampViewDomain([lo, hi]);
+    h15RenderAll();
+  }
+
+  function h15AttachInteraction(panel) {
+    var svg = panel.svg;
+    var pointers = {};
+    var dragState = null;
+    var pinchState = null;
+
+    function activeIds() { return Object.keys(pointers); }
+    function distanceBetween(idA, idB) {
+      var a = pointers[idA], b = pointers[idB];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+    function midpointX(idA, idB) { return (pointers[idA].x + pointers[idB].x) / 2; }
+
+    svg.addEventListener("pointerdown", function (evt) {
+      evt.preventDefault();
+      try { svg.setPointerCapture(evt.pointerId); } catch (e) { /* nice-to-have */ }
+      pointers[evt.pointerId] = { x: evt.clientX, y: evt.clientY };
+      var ids = activeIds();
+      if (ids.length === 2) {
+        dragState = null;
+        pinchState = { ids: ids, lastDist: distanceBetween(ids[0], ids[1]) };
+        svg.classList.remove("dragging");
+        panel.tapStart = null;
+      } else if (ids.length === 1) {
+        pinchState = null;
+        svg.classList.add("dragging");
+        dragState = { startX: evt.clientX, startDomain: h15.viewDomain.slice() };
+        panel.tapStart = { x: evt.clientX, y: evt.clientY };
+      }
+    });
+
+    svg.addEventListener("pointermove", function (evt) {
+      if (!(evt.pointerId in pointers)) { h15HandleHover(panel, evt); return; }
+      pointers[evt.pointerId] = { x: evt.clientX, y: evt.clientY };
+      if (panel.tapStart && Math.hypot(evt.clientX - panel.tapStart.x, evt.clientY - panel.tapStart.y) > TAP_MAX_MOVE_PX) {
+        panel.tapStart = null;
+      }
+      if (pinchState) {
+        evt.preventDefault();
+        var ids = pinchState.ids;
+        if (!(ids[0] in pointers) || !(ids[1] in pointers)) return;
+        var dist = distanceBetween(ids[0], ids[1]);
+        if (pinchState.lastDist > 0 && dist > 0) {
+          h15ZoomAtLocalX(panel, h15LocalXFromClientX(svg, midpointX(ids[0], ids[1])), pinchState.lastDist / dist);
+        }
+        pinchState.lastDist = dist;
+        return;
+      }
+      if (dragState) {
+        evt.preventDefault();
+        var scale = h15.width / svg.getBoundingClientRect().width;
+        var pxPerMs = panel.innerW / (dragState.startDomain[1] - dragState.startDomain[0]);
+        var dxPx = (evt.clientX - dragState.startX) * scale;
+        var dtMs = dxPx / pxPerMs;
+        h15.viewDomain = h15ClampViewDomain([dragState.startDomain[0] - dtMs, dragState.startDomain[1] - dtMs]);
+        h15RenderAll();
+        return;
+      }
+      h15HandleHover(panel, evt);
+    });
+
+    function endPointer(evt) {
+      try { svg.releasePointerCapture(evt.pointerId); } catch (e) { /* already released */ }
+      delete pointers[evt.pointerId];
+      var ids = activeIds();
+      var wasTap = evt.type === "pointerup" && !pinchState && panel.tapStart && ids.length === 0;
+      if (pinchState) {
+        if (ids.length < 2) {
+          pinchState = null;
+          if (ids.length === 1) {
+            dragState = { startX: pointers[ids[0]].x, startDomain: h15.viewDomain.slice() };
+            svg.classList.add("dragging");
+          } else {
+            svg.classList.remove("dragging");
+          }
+        }
+      } else if (dragState && ids.length === 0) {
+        dragState = null;
+        svg.classList.remove("dragging");
+      }
+      if (wasTap) {
+        panel.tapStart = null;
+        h15SelectPoint(panel, evt);
+      }
+    }
+    svg.addEventListener("pointerup", endPointer);
+    svg.addEventListener("pointercancel", endPointer);
+    svg.addEventListener("pointerleave", function () {
+      if (h15.pinned) return;
+      h15.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
+      els.tooltip.hidden = true;
+    });
+
+    svg.addEventListener("wheel", function (evt) {
+      evt.preventDefault();
+      var factor = evt.deltaY > 0 ? 1.15 : 1 / 1.15;
+      h15ZoomAtLocalX(panel, h15LocalXFromClientX(svg, evt.clientX), factor);
+    }, { passive: false });
+  }
+
+  function h15HandleHover(panel, evt) {
+    if (h15.pinned) return;
+    h15ShowReadingsAt(h15TMsFromClientX(panel, evt.clientX), evt);
+  }
+
+  function h15SelectPoint(panel, evt) {
+    h15.pinned = true;
+    h15ShowReadingsAt(h15TMsFromClientX(panel, evt.clientX), evt);
+  }
+
+  function h15TMsFromClientX(panel, clientX) {
+    var localX = h15LocalXFromClientX(panel.svg, clientX);
+    var clampedX = Math.max(0, Math.min(panel.innerW, localX));
+    return h15.viewDomain[0] + (clampedX / panel.innerW) * (h15.viewDomain[1] - h15.viewDomain[0]);
+  }
+
+  function h15ShowReadingsAt(tMs, evt) {
+    h15.panels.forEach(function (p) {
+      var cx = p.x ? p.x(tMs) : -10;
+      if (p.crosshair) {
+        p.crosshair.setAttribute("x1", cx);
+        p.crosshair.setAttribute("x2", cx);
+        p.crosshair.setAttribute("visibility", "visible");
+      }
+    });
+
+    var rows = [];
+    var regions = Object.keys(h15.data.regions);
+    regions.forEach(function (region) {
+      var payload = h15.data.regions[region];
+      var nearest = null, bestDiff = Infinity;
+      payload.history.forEach(function (h) {
+        var diff = Math.abs(Date.parse(h.t) - tMs);
+        if (diff < bestDiff) { bestDiff = diff; nearest = h; }
+      });
+      if (nearest) rows.push({ region: region, row: nearest });
+    });
+    if (!rows.length) return;
+    h15ShowTooltip(evt, rows);
+  }
+
+  function h15ShowTooltip(evt, rows) {
+    els.tooltip.innerHTML = "";
+    var timeRow = document.createElement("div");
+    timeRow.className = "row";
+    var k0 = document.createElement("span"); k0.className = "k"; k0.textContent = "Time";
+    var tMs0 = Date.parse(rows[0].row.t);
+    var v0 = document.createElement("span"); v0.className = "v"; v0.textContent = fmtDateTime(tMs0);
+    timeRow.appendChild(k0); timeRow.appendChild(v0);
+    els.tooltip.appendChild(timeRow);
+
+    rows.forEach(function (r) {
+      var row = document.createElement("div");
+      row.className = "row";
+      var k = document.createElement("span");
+      k.className = "k";
+      k.style.color = h15.data.colors[r.region];
+      k.textContent = capitalize(r.region);
+      var v = document.createElement("span");
+      v.className = "v";
+      var psi = r.row.psi === null || r.row.psi === undefined ? "–" : Math.round(r.row.psi);
+      v.textContent = "PSI " + psi + " / PM " + (r.row.pm25_1h === null ? "–" : r.row.pm25_1h.toFixed(1));
+      row.appendChild(k); row.appendChild(v);
+      els.tooltip.appendChild(row);
+    });
+
+    els.tooltip.hidden = false;
+    var left = evt.clientX + 14;
+    if (left + 220 > window.innerWidth) left = evt.clientX - 220 - 14;
+    els.tooltip.style.left = left + "px";
+    els.tooltip.style.top = (evt.clientY + 14) + "px";
+  }
+
+  function h15BuildTable(data) {
+    var rows = [];
+    Object.keys(data.regions).forEach(function (region) {
+      data.regions[region].history.forEach(function (h) {
+        rows.push({ t: Date.parse(h.t), region: region, row: h });
+      });
+    });
+    rows.sort(function (a, b) { return b.t - a.t; });
+    els.tableBodyH15.innerHTML = "";
+    rows.forEach(function (r) {
+      var tr = document.createElement("tr");
+      appendCell(tr, fmtDateTime(r.t));
+      appendCell(tr, capitalize(r.region));
+      appendCell(tr, r.row.psi === null ? "–" : Math.round(r.row.psi));
+      appendCell(tr, r.row.pm25_1h === null ? "–" : r.row.pm25_1h.toFixed(1));
+      els.tableBodyH15.appendChild(tr);
+    });
+  }
+
+  function h15Init() {
+    fetch("haze2015/data.json", { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        h15.data = data;
+        var allT = [];
+        Object.keys(data.regions).forEach(function (region) {
+          data.regions[region].history.forEach(function (h) { allT.push(Date.parse(h.t)); });
+        });
+        if (!allT.length) throw new Error("no data points in haze2015/data.json");
+        h15.fullDomain = [Math.min.apply(null, allT), Math.max.apply(null, allT)];
+        h15.viewDomain = h15.fullDomain.slice();
+        h15ComputeYDomains();
+
+        els.subtitleH15.textContent = "Historical NEA data, " + fmtAxisDate(h15.fullDomain[0]) + " to " + fmtAxisDate(h15.fullDomain[1]) + " SGT";
+
+        h15BuildLegend(data.colors);
+        h15BuildTable(data);
+        h15MeasureWidth();
+        h15BuildPanel("chart-pm25-h15", false);
+        h15BuildPanel("chart-psi-h15", true);
+        h15RenderAll();
+      })
+      .catch(function (err) {
+        els.subtitleH15.textContent = "Failed to load 2015 haze data";
+        var p = document.createElement("p");
+        p.className = "empty-state";
+        p.textContent = "Could not load 2015 haze data (" + err.message + ").";
+        var card = document.getElementById("chart-card-h15");
+        if (card) card.replaceWith(p);
+      });
+  }
+
+  // ---------------------------------------------------------------------
   // Tabs + init
   // ---------------------------------------------------------------------
   function activateTab(name) {
     if (name === activeTab) return;
     activeTab = name;
-    var liveActive = name === "live";
 
     // Dismiss any pinned tooltip/crosshair from the tab being left.
     state.pinned = false;
     estate.pinned = false;
+    h15.pinned = false;
     els.tooltip.hidden = true;
     state.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
     estate.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
+    h15.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
 
-    document.getElementById("tab-panel-live").hidden = !liveActive;
-    document.getElementById("tab-panel-episodes").hidden = liveActive;
-    els.tabBtnLive.classList.toggle("active", liveActive);
-    els.tabBtnEpi.classList.toggle("active", !liveActive);
-    els.tabBtnLive.setAttribute("aria-selected", liveActive ? "true" : "false");
-    els.tabBtnEpi.setAttribute("aria-selected", liveActive ? "false" : "true");
+    document.getElementById("tab-panel-live").hidden = name !== "live";
+    document.getElementById("tab-panel-episodes").hidden = name !== "episodes";
+    document.getElementById("tab-panel-h15").hidden = name !== "h15";
+    els.tabBtnLive.classList.toggle("active", name === "live");
+    els.tabBtnEpi.classList.toggle("active", name === "episodes");
+    els.tabBtnH15.classList.toggle("active", name === "h15");
+    els.tabBtnLive.setAttribute("aria-selected", name === "live" ? "true" : "false");
+    els.tabBtnEpi.setAttribute("aria-selected", name === "episodes" ? "true" : "false");
+    els.tabBtnH15.setAttribute("aria-selected", name === "h15" ? "true" : "false");
 
-    if (liveActive) {
+    if (name === "live") {
       measureWidth();
       renderAll();
-    } else if (!estate.initialized) {
-      estate.initialized = true;
-      epiInit();
-    } else {
-      epiMeasureWidth();
-      epiRenderAll();
+    } else if (name === "episodes") {
+      if (!estate.initialized) {
+        estate.initialized = true;
+        epiInit();
+      } else {
+        epiMeasureWidth();
+        epiRenderAll();
+      }
+    } else if (name === "h15") {
+      if (!h15.initialized) {
+        h15.initialized = true;
+        h15Init();
+      } else {
+        h15MeasureWidth();
+        h15RenderAll();
+      }
     }
   }
 
@@ -1599,6 +2039,7 @@ INDEX_HTML = r"""<!doctype html>
     els.statusTableBody = document.getElementById("status-table-body");
     els.tabBtnLive = document.getElementById("tab-btn-live");
     els.tabBtnEpi = document.getElementById("tab-btn-episodes");
+    els.tabBtnH15 = document.getElementById("tab-btn-h15");
     els.subtitleEpi = document.getElementById("subtitle-epi");
     els.regionFilterEpi = document.getElementById("region-filter-epi");
     els.selectEpi = document.getElementById("episode-select");
@@ -1607,6 +2048,12 @@ INDEX_HTML = r"""<!doctype html>
     els.toggleTableBtnEpi = document.getElementById("toggle-table-epi");
     els.tableWrapEpi = document.getElementById("table-wrap-epi");
     els.tableBodyEpi = document.getElementById("data-table-body-epi");
+    els.subtitleH15 = document.getElementById("subtitle-h15");
+    els.legendH15 = document.getElementById("legend-h15");
+    els.resetBtnH15 = document.getElementById("reset-view-h15");
+    els.toggleTableBtnH15 = document.getElementById("toggle-table-h15");
+    els.tableWrapH15 = document.getElementById("table-wrap-h15");
+    els.tableBodyH15 = document.getElementById("data-table-body-h15");
 
     els.refreshBtn.addEventListener("click", function () {
       location.reload();
@@ -1624,6 +2071,7 @@ INDEX_HTML = r"""<!doctype html>
     });
     els.tabBtnLive.addEventListener("click", function () { activateTab("live"); });
     els.tabBtnEpi.addEventListener("click", function () { activateTab("episodes"); });
+    els.tabBtnH15.addEventListener("click", function () { activateTab("h15"); });
     els.selectEpi.addEventListener("change", function () { epiSelectEpisode(els.selectEpi.value); });
     els.resetBtnEpi.addEventListener("click", function () {
       if (!estate.episode) return;
@@ -1637,14 +2085,29 @@ INDEX_HTML = r"""<!doctype html>
       els.tableWrapEpi.hidden = !hidden;
       els.toggleTableBtnEpi.textContent = hidden ? "Hide data table" : "View data table";
     });
+    els.resetBtnH15.addEventListener("click", function () {
+      if (!h15.data) return;
+      h15.viewDomain = h15.fullDomain.slice();
+      h15.pinned = false;
+      els.tooltip.hidden = true;
+      h15RenderAll();
+    });
+    els.toggleTableBtnH15.addEventListener("click", function () {
+      var hidden = els.tableWrapH15.hidden;
+      els.tableWrapH15.hidden = !hidden;
+      els.toggleTableBtnH15.textContent = hidden ? "Hide data table" : "View data table";
+    });
 
     window.addEventListener("resize", debounce(function () {
       if (activeTab === "live") {
         measureWidth();
         renderAll();
-      } else if (estate.initialized) {
+      } else if (activeTab === "episodes" && estate.initialized) {
         epiMeasureWidth();
         epiRenderAll();
+      } else if (activeTab === "h15" && h15.initialized) {
+        h15MeasureWidth();
+        h15RenderAll();
       }
     }, 150));
 
@@ -1664,6 +2127,13 @@ INDEX_HTML = r"""<!doctype html>
       estate.pinned = false;
       els.tooltip.hidden = true;
       estate.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
+    });
+    document.addEventListener("pointerdown", function (evt) {
+      if (!h15.pinned) return;
+      if (evt.target.closest && evt.target.closest("#tab-panel-h15")) return;
+      h15.pinned = false;
+      els.tooltip.hidden = true;
+      h15.panels.forEach(function (p) { if (p.crosshair) p.crosshair.setAttribute("visibility", "hidden"); });
     });
 
     fetch("data.json", { cache: "no-store" })
