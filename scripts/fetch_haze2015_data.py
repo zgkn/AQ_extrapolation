@@ -79,8 +79,12 @@ def download_csv(url: str) -> list[dict]:
     resp = requests.get(url, timeout=REQUEST_TIMEOUT_S)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig")
-    rows = list(csv.DictReader(text.splitlines()))
+    lines = text.splitlines()
+    log.info("raw first 2 line(s): %r", lines[:2])
+    rows = list(csv.DictReader(lines))
     log.info("downloaded %d total row(s) from %s", len(rows), url.split("?")[0])
+    if rows:
+        log.info("sample row(s): %r", rows[:2])
     return rows
 
 
