@@ -513,7 +513,7 @@ INDEX_HTML = r"""<!doctype html>
     </div>
 
     <div class="chart-card" id="chart-card-whatif">
-      <div class="panel-title">PSI (24-hr) &mdash; projected hourly over the next 3 days, holding the entered 1-hr PM2.5 range flat</div>
+      <div class="panel-title">PSI (24-hr) &mdash; projected hourly over the next 3 days (through the end of that final day), holding the entered 1-hr PM2.5 range flat</div>
       <svg class="chart" id="chart-psi-whatif"></svg>
     </div>
 
@@ -2146,10 +2146,11 @@ INDEX_HTML = r"""<!doctype html>
   // exactly the model run once at (psiLow, pmLow) and once at (psiHigh,
   // pmHigh) -- no need to enumerate all four corner combinations.
   // ---------------------------------------------------------------------
-  var WHATIF_HOURS = 72; // 3 days, hourly
+  var WHATIF_HOURS = 72; // nominal 3 days -- see wiEndHours() for why the actual span usually runs a bit longer
 
   var wi = {
     nowMs: null,        // anchor time for the projection (the Live dashboard's latest-reading timestamp)
+    hours: null,         // actual projection length in hours (>= WHATIF_HOURS, rounded up to end-of-day SGT)
     lowSeries: null,     // [{t, avgPm25, psi}]
     highSeries: null,
     injections: [],      // [{idx, which}] -- points where the user has injected a new value, for the chart markers
@@ -2162,6 +2163,19 @@ INDEX_HTML = r"""<!doctype html>
     initialized: false,  // true once this tab's first activation has kicked off
   };
   var onLiveDataReady = []; // callbacks queued if this tab opens before the Live dashboard's fetch resolves
+
+  // "Now + 72h" usually lands mid-day, which would cut the chart off
+  // partway through its final day -- extend that end point forward to
+  // 23:00 SGT of whichever day it falls on, so the last day is always
+  // shown in full (never backward, so the window is still at least 72h).
+  function wiEndHours(nowMs) {
+    var roughEndMs = nowMs + WHATIF_HOURS * 3600 * 1000;
+    var localEnd = roughEndMs + SG_OFFSET_MS;
+    var localDayStart = Math.floor(localEnd / ONE_DAY_MS) * ONE_DAY_MS;
+    var dayEndMs = (localDayStart + 23 * 3600 * 1000) - SG_OFFSET_MS;
+    var endMs = Math.max(roughEndMs, dayEndMs);
+    return Math.round((endMs - nowMs) / 3600000);
+  }
 
   function wiMeasureWidth() {
     var card = document.getElementById("chart-card-whatif");
@@ -2217,8 +2231,9 @@ INDEX_HTML = r"""<!doctype html>
     var baselineLow = psiToPm25(psiLow);
     var baselineHigh = psiToPm25(psiHigh);
 
+    wi.hours = wiEndHours(wi.nowMs);
     var lowSeries = [], highSeries = [];
-    for (var h = 0; h <= WHATIF_HOURS; h++) {
+    for (var h = 0; h <= wi.hours; h++) {
       var tMs = wi.nowMs + h * 3600 * 1000;
       var avgLow = h <= 24 ? projectedAvgPm25(baselineLow, pmLow, h) : pmLow;
       var avgHigh = h <= 24 ? projectedAvgPm25(baselineHigh, pmHigh, h) : pmHigh;
@@ -2233,7 +2248,7 @@ INDEX_HTML = r"""<!doctype html>
     wi.lowSeries = lowSeries;
     wi.highSeries = highSeries;
     wi.injections = []; // [{idx, which}] -- cleared on every fresh Calculate
-    wi.fullDomain = [wi.nowMs, wi.nowMs + WHATIF_HOURS * 3600 * 1000];
+    wi.fullDomain = [wi.nowMs, wi.nowMs + wi.hours * 3600 * 1000];
     wi.viewDomain = wi.fullDomain.slice();
     wi.pinned = false;
     els.tooltip.hidden = true;
@@ -2532,7 +2547,7 @@ INDEX_HTML = r"""<!doctype html>
   // scan, and this stays correct however the view is panned/zoomed.
   function wiHourIndexFromMs(tMs) {
     var idx = Math.round((tMs - wi.nowMs) / 3600000);
-    return Math.max(0, Math.min(WHATIF_HOURS, idx));
+    return Math.max(0, Math.min(wi.hours, idx));
   }
 
   function wiShowReadingsAt(tMs, evt) {
@@ -2571,7 +2586,7 @@ INDEX_HTML = r"""<!doctype html>
       els.tooltip.appendChild(row);
     });
 
-    if (idx < WHATIF_HOURS) {
+    if (idx < wi.hours) {
       var btnRow = document.createElement("div");
       btnRow.className = "row tooltip-actions";
       [["low", "Edit low →"], ["high", "Edit high →"]].forEach(function (pair) {
