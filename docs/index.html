@@ -197,6 +197,23 @@
   .tooltip .row { display: flex; gap: 10px; justify-content: space-between; }
   .tooltip .row .k { opacity: 0.75; }
   .tooltip .row .v { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tooltip .tooltip-actions {
+    pointer-events: auto;
+    gap: 6px;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255,255,255,0.2);
+  }
+  .tooltip .tooltip-actions button {
+    font: inherit;
+    font-size: 0.72rem;
+    padding: 4px 8px;
+    border-radius: 5px;
+    border: 1px solid rgba(255,255,255,0.3);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
   .table-section { margin-top: 10px; }
   .table-section button {
     font: inherit;
@@ -364,7 +381,7 @@
     <p class="status-note" id="whatif-error" hidden></p>
 
     <div class="toolbar">
-      <span>Drag to pan &middot; scroll or pinch to zoom &middot; tap a point for readings</span>
+      <span>Drag to pan &middot; scroll or pinch to zoom &middot; tap a point, then "Edit low/high" to inject a new value from there onward</span>
       <button id="reset-view-whatif" type="button">Reset view</button>
     </div>
 
@@ -396,7 +413,10 @@
     2015. The What-if Projection tab uses the same flat-hold model as the Live dashboard, but
     lets you enter your own 24-hr PSI and 1-hr PM2.5 ranges instead of using live readings --
     the low/high band is just that model run once at each end of your two ranges, not a formal
-    confidence interval. Data: data.gov.sg.
+    confidence interval. Tap a point on that chart and use its "Edit low/high" buttons to inject
+    a new PM2.5 value partway through -- everything after that hour recalculates from it, as its
+    own fresh flat-hold run; everything before stays as already drawn. Calculate re-runs from the
+    form and clears any injections. Data: data.gov.sg.
   </footer>
 </main>
 
@@ -2003,8 +2023,9 @@
 
   var wi = {
     nowMs: null,        // anchor time for the projection (the Live dashboard's latest-reading timestamp)
-    lowSeries: null,     // [{t, psi}]
+    lowSeries: null,     // [{t, avgPm25, psi}]
     highSeries: null,
+    injections: [],      // [{idx, which}] -- points where the user has injected a new value, for the chart markers
     fullDomain: null,
     viewDomain: null,
     psiYDomain: null,
@@ -2075,11 +2096,16 @@
       var avgLow = h <= 24 ? projectedAvgPm25(baselineLow, pmLow, h) : pmLow;
       var avgHigh = h <= 24 ? projectedAvgPm25(baselineHigh, pmHigh, h) : pmHigh;
       var tIso = new Date(tMs).toISOString();
-      lowSeries.push({ t: tIso, psi: pm25ToPsi(avgLow) });
-      highSeries.push({ t: tIso, psi: pm25ToPsi(avgHigh) });
+      // avgPm25 (the 24-hr-average-equivalent at this hour) is kept, not
+      // just the derived PSI, so a later wiInjectAt() has the right
+      // starting baseline to re-anchor the flat-hold formula from -- the
+      // same role the live dashboard's own "baseline" plays at hour 0.
+      lowSeries.push({ t: tIso, avgPm25: avgLow, psi: pm25ToPsi(avgLow) });
+      highSeries.push({ t: tIso, avgPm25: avgHigh, psi: pm25ToPsi(avgHigh) });
     }
     wi.lowSeries = lowSeries;
     wi.highSeries = highSeries;
+    wi.injections = []; // [{idx, which}] -- cleared on every fresh Calculate
     wi.fullDomain = [wi.nowMs, wi.nowMs + WHATIF_HOURS * 3600 * 1000];
     wi.viewDomain = wi.fullDomain.slice();
     wi.pinned = false;
@@ -2100,6 +2126,42 @@
     wi.highSeries.forEach(function (p) { vals.push(p.psi); });
     var ticks = niceTicks(Math.min.apply(null, vals), Math.max.apply(null, vals), 4);
     wi.psiYDomain = [ticks[0], ticks[ticks.length - 1]];
+  }
+
+  // Injects a new "hold flat from here" PM2.5 value at hour `idx` on the
+  // low or high line, and recomputes every hour after it -- points before
+  // idx are untouched. Re-anchors the exact same flat-hold formula used by
+  // wiCalculate()/the Live dashboard, just starting from this hour's own
+  // avgPm25 (its actual 24-hr-average-equivalent so far) as the new
+  // baseline instead of hour 0's.
+  function wiInjectAt(which, idx) {
+    var series = which === "low" ? wi.lowSeries : wi.highSeries;
+    var point = series[idx];
+    var input = window.prompt(
+      "New 1-hr PM2.5 (µg/m³) to hold flat from " + fmtDateTime(Date.parse(point.t)) + " onward:",
+      point.avgPm25.toFixed(1)
+    );
+    if (input === null) return; // cancelled
+    var newLatest = parseFloat(input);
+    if (!isFinite(newLatest) || newLatest < 0) {
+      window.alert("Please enter a non-negative number.");
+      return;
+    }
+
+    var baseline = point.avgPm25;
+    for (var i = idx; i < series.length; i++) {
+      var dt = i - idx;
+      var avg = dt === 0 ? baseline : (dt <= 24 ? projectedAvgPm25(baseline, newLatest, dt) : newLatest);
+      series[i].avgPm25 = avg;
+      series[i].psi = pm25ToPsi(avg);
+    }
+    wi.injections.push({ idx: idx, which: which });
+
+    wi.pinned = false;
+    els.tooltip.hidden = true;
+    wiComputeYDomain();
+    wiBuildTable();
+    wiRenderAll();
   }
 
   function wiBuildPanel(id, isPsi) { return buildPanelGeneric(id, isPsi, wi.panels, wiAttachInteraction); }
@@ -2179,6 +2241,18 @@
       drawMarkers(panel.plot, lowPts, x, y, "t", "psi", "var(--whatif-line)", 1);
       drawMarkers(panel.plot, highPts, x, y, "t", "psi", "var(--whatif-line)", 0.6);
     }
+
+    // Larger ringed marker at each hour the user has injected a new value,
+    // so an edited line reads as deliberately reshaped, not just noisy.
+    wi.injections.forEach(function (inj) {
+      var pts = inj.which === "low" ? lowPts : highPts;
+      var p = pts[inj.idx];
+      if (!p) return;
+      panel.plot.appendChild(svgEl("circle", {
+        cx: x(p.t).toFixed(1), cy: y(p.psi).toFixed(1), r: 5,
+        fill: "var(--surface)", stroke: "var(--whatif-line)", "stroke-width": 2
+      }));
+    });
 
     var crosshair = svgEl("line", { x1: -10, x2: -10, y1: 0, y2: innerH, stroke: "var(--faint)", "stroke-width": 1, visibility: "hidden" });
     panel.chromeGroup.appendChild(crosshair);
@@ -2326,13 +2400,12 @@
     return wi.viewDomain[0] + (clampedX / panel.innerW) * (wi.viewDomain[1] - wi.viewDomain[0]);
   }
 
-  function wiNearest(series, tMs) {
-    var nearest = null, bestDiff = Infinity;
-    series.forEach(function (p) {
-      var diff = Math.abs(Date.parse(p.t) - tMs);
-      if (diff < bestDiff) { bestDiff = diff; nearest = p; }
-    });
-    return nearest;
+  // The series is hourly and evenly spaced starting at wi.nowMs, so the
+  // exact hour index is a direct round-trip -- no need for a nearest-point
+  // scan, and this stays correct however the view is panned/zoomed.
+  function wiHourIndexFromMs(tMs) {
+    var idx = Math.round((tMs - wi.nowMs) / 3600000);
+    return Math.max(0, Math.min(WHATIF_HOURS, idx));
   }
 
   function wiShowReadingsAt(tMs, evt) {
@@ -2344,13 +2417,16 @@
         p.crosshair.setAttribute("visibility", "visible");
       }
     });
-    var low = wiNearest(wi.lowSeries, tMs);
-    var high = wiNearest(wi.highSeries, tMs);
-    if (!low || !high) return;
-    wiShowTooltip(evt, low, high);
+    var idx = wiHourIndexFromMs(tMs);
+    wiShowTooltip(evt, idx);
   }
 
-  function wiShowTooltip(evt, low, high) {
+  // Tapping a point pins this tooltip (same gesture as every other chart on
+  // the site) rather than injecting immediately -- injecting is a
+  // deliberate second click on one of the buttons below, so just exploring
+  // the chart never risks silently overwriting a scenario.
+  function wiShowTooltip(evt, idx) {
+    var low = wi.lowSeries[idx], high = wi.highSeries[idx];
     els.tooltip.innerHTML = "";
     var timeRow = document.createElement("div");
     timeRow.className = "row";
@@ -2368,9 +2444,31 @@
       els.tooltip.appendChild(row);
     });
 
+    if (idx < WHATIF_HOURS) {
+      var btnRow = document.createElement("div");
+      btnRow.className = "row tooltip-actions";
+      [["low", "Edit low →"], ["high", "Edit high →"]].forEach(function (pair) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = pair[1];
+        btn.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+        btn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          wiInjectAt(pair[0], idx);
+        });
+        btnRow.appendChild(btn);
+      });
+      els.tooltip.appendChild(btnRow);
+    }
+
     els.tooltip.hidden = false;
+    // Measured, not the ~220px other tabs' simpler tooltips assume -- the
+    // button row can make this one noticeably wider, and a hardcoded guess
+    // was clipping it off the left edge on narrow screens.
+    var ttW = els.tooltip.getBoundingClientRect().width || 220;
     var left = evt.clientX + 14;
-    if (left + 220 > window.innerWidth) left = evt.clientX - 220 - 14;
+    if (left + ttW > window.innerWidth) left = evt.clientX - ttW - 14;
+    left = Math.max(8, left);
     els.tooltip.style.left = left + "px";
     els.tooltip.style.top = (evt.clientY + 14) + "px";
   }
