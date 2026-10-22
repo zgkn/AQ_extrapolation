@@ -569,11 +569,11 @@ INDEX_HTML = r"""<!doctype html>
   var TAP_MAX_MOVE_PX = 8; // pointerdown->up movement under this counts as a tap, not a drag
   var ONE_DAY_MS = 24 * 3600 * 1000;
   var MAX_MARKER_POINTS = 60; // per line, within the current view -- above this, dots would just be a smear
-  // The live dashboard retains/can show up to HISTORY_WINDOW_HOURS (60
-  // days, see aq_lib.py) of history, but starting zoomed out that far
-  // makes the initial view cluttered and hard to read. Default (and
-  // "Reset view") to the most recent 48h instead -- the full range is
-  // still just a pan/zoom away.
+  // The live dashboard retains/can show everything since HISTORY_START
+  // (see aq_lib.py -- Jan 2026 onward, growing indefinitely), but starting
+  // zoomed out that far makes the initial view cluttered and hard to read.
+  // Default (and "Reset view") to the most recent 48h instead -- the full
+  // range is still just a pan/zoom away.
   var DEFAULT_VIEW_MS = 48 * 3600 * 1000;
   var MIN_PX_PER_TICK = 65;
   var STEP_CANDIDATES_MS = [15, 30, 60, 120, 180, 360, 720, 1440, 2880, 4320, 10080, 20160, 43200, 86400]
@@ -687,8 +687,9 @@ INDEX_HTML = r"""<!doctype html>
   // (narrow mobile screens need fewer ticks or "Sat 12:00"-style labels
   // collide into illegible mush) -- aligned to nice SGT-hour boundaries
   // (not UTC/epoch ones -- otherwise ticks land on odd times). Extends up
-  // to a 60-day step so a fully-zoomed-out live view (up to 60 days of
-  // history) doesn't pack in far more ticks than maxTicks allows.
+  // to a 60-day step so a fully-zoomed-out live view (the live dashboard's
+  // history grows indefinitely from HISTORY_START -- see aq_lib.py) doesn't
+  // pack in far more ticks than maxTicks allows.
   function timeTicks(domain, innerW) {
     var span = domain[1] - domain[0];
     var maxTicks = Math.max(2, Math.floor(innerW / MIN_PX_PER_TICK));
@@ -1176,7 +1177,7 @@ INDEX_HTML = r"""<!doctype html>
     timeRow.className = "row";
     var k0 = document.createElement("span"); k0.className = "k"; k0.textContent = "Time";
     var tMs0 = Date.parse(rows[0].row.t);
-    // Include the date, not just weekday+time -- with up to 60 days of
+    // Include the date, not just weekday+time -- with many months of
     // history, "Wed 21:00" alone doesn't say *which* Wednesday.
     var v0 = document.createElement("span"); v0.className = "v"; v0.textContent = fmtAxisDate(tMs0) + " " + fmtSGT(tMs0, { weekday: undefined });
     timeRow.appendChild(k0); timeRow.appendChild(v0);

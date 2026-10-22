@@ -22,8 +22,15 @@ PM25_URL = f"{API_BASE}/pm25"
 PSI_URL = f"{API_BASE}/psi"
 
 HISTORY_PATH = "data/history.csv"
-HISTORY_WINDOW_HOURS = 24 * 60  # how much history the chart displays (60 days)
-RETENTION_HOURS = 24 * 61  # HISTORY_WINDOW_HOURS + a buffer so a missed run can still backfill
+# The live dashboard used to keep a rolling 60-day window (a fixed number of
+# hours relative to "now"). Switched to a fixed anchor date instead, so the
+# chart accumulates everything since HISTORY_START forward indefinitely
+# rather than sliding -- same no-trim-before-an-anchor-date pattern as the
+# Past episodes tab (see fetch_episodes_data.py's default_start_date), just
+# with a fixed date instead of a rolling "since August" one. Dial this back
+# to a relative window again later by replacing it with `now - timedelta(...)`
+# wherever it's used below, if the data/page size ever becomes a problem.
+HISTORY_START = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
 GAP_THRESHOLD_HOURS = 2  # if last row is older than this vs. now, treat as a missed run
 
 CSV_FIELDS = [
@@ -151,8 +158,7 @@ def compute_payload(rows: list[dict], region: str):
     pm25_24h_source = [r.get("pm25_24h_source") or None for r in rows]
 
     now = times[-1]
-    window_start = now - dt.timedelta(hours=HISTORY_WINDOW_HOURS)
-    idx = [i for i, t in enumerate(times) if t >= window_start] or list(range(len(times)))
+    idx = [i for i, t in enumerate(times) if t >= HISTORY_START] or list(range(len(times)))
 
     history = [
         {

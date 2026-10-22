@@ -7,7 +7,7 @@ Each run:
      ~GAP_THRESHOLD_HOURS old (missed run, or this is the very first run),
      also backfills via `?date=YYYY-MM-DD` for each missing day.
   3. Merges everything into data/history.csv, deduped on (timestamp, region),
-     then trims rows older than RETENTION_HOURS relative to the newest row.
+     then trims rows older than HISTORY_START.
 
 No API key is required for these data.gov.sg v2 real-time endpoints.
 """
@@ -30,9 +30,9 @@ from aq_lib import (  # noqa: E402
     CSV_FIELDS,
     GAP_THRESHOLD_HOURS,
     HISTORY_PATH,
+    HISTORY_START,
     PM25_URL,
     PSI_URL,
-    RETENTION_HOURS,
     parse_ts,
     psi_to_pm25,
 )
@@ -266,11 +266,9 @@ def save(rows: dict[tuple[str, str], dict]) -> None:
 def trim_retention(rows: dict[tuple[str, str], dict]) -> dict[tuple[str, str], dict]:
     if not rows:
         return rows
-    newest = max(parse_ts(r["timestamp"]) for r in rows.values())
-    cutoff = newest - dt.timedelta(hours=RETENTION_HOURS)
-    kept = {k: r for k, r in rows.items() if parse_ts(r["timestamp"]) >= cutoff}
+    kept = {k: r for k, r in rows.items() if parse_ts(r["timestamp"]) >= HISTORY_START}
     trimmed = len(rows) - len(kept)
-    log.info("retention: trimmed %d row(s) older than %dh before %s", trimmed, RETENTION_HOURS, newest.isoformat())
+    log.info("retention: trimmed %d row(s) older than HISTORY_START (%s)", trimmed, HISTORY_START.isoformat())
     return kept
 
 
@@ -294,23 +292,21 @@ def find_gap_days(rows: dict[tuple[str, str], dict]) -> list[str]:
     return sorted(days)
 
 
-def find_leading_gap_days(rows: dict[tuple[str, str], dict], now: dt.datetime) -> list[str]:
-    """If the *earliest* retained row is more recent than RETENTION_HOURS
-    would allow -- typically because RETENTION_HOURS/HISTORY_WINDOW_HOURS
-    was just raised in aq_lib.py -- backfill the days between the retention
-    boundary and that earliest row, so a config change takes effect on the
-    very next run instead of the dashboard slowly growing into the new
-    window over the following weeks/months. Distinct from find_gap_days(),
-    which only looks *between* existing rows, never before the earliest
-    one."""
+def find_leading_gap_days(rows: dict[tuple[str, str], dict]) -> list[str]:
+    """If the *earliest* retained row is more recent than HISTORY_START --
+    typically because HISTORY_START was just moved earlier in aq_lib.py --
+    backfill the days between HISTORY_START and that earliest row, so a
+    config change takes effect on the very next run instead of the
+    dashboard slowly growing into the new window over the following
+    weeks/months. Distinct from find_gap_days(), which only looks *between*
+    existing rows, never before the earliest one."""
     if not rows:
         return []
     earliest = min(parse_ts(r["timestamp"]) for r in rows.values())
-    boundary = now - dt.timedelta(hours=RETENTION_HOURS)
-    if earliest <= boundary + dt.timedelta(hours=GAP_THRESHOLD_HOURS):
+    if earliest <= HISTORY_START + dt.timedelta(hours=GAP_THRESHOLD_HOURS):
         return []
     days = []
-    d = boundary.date()
+    d = HISTORY_START.date()
     while d <= earliest.date():
         days.append(d.isoformat())
         d += dt.timedelta(days=1)
@@ -319,9 +315,9 @@ def find_leading_gap_days(rows: dict[tuple[str, str], dict], now: dt.datetime) -
 
 def missing_days(last_ts: dt.datetime | None, now: dt.datetime) -> list[str]:
     if last_ts is None:
-        # first-ever run: seed with a small lookback so the dashboard has
-        # something to plot immediately.
-        start = (now - dt.timedelta(hours=RETENTION_HOURS)).date()
+        # first-ever run: seed from HISTORY_START so the dashboard has
+        # everything it's supposed to keep right from the start.
+        start = HISTORY_START.date()
     else:
         start = last_ts.date()
     days = []
@@ -346,7 +342,7 @@ def main() -> None:
 
     trailing_gap = last_ts is None or (now - last_ts) > dt.timedelta(hours=GAP_THRESHOLD_HOURS)
     internal_gap_days = find_gap_days(existing)
-    leading_gap_days = find_leading_gap_days(existing, now)
+    leading_gap_days = find_leading_gap_days(existing)
     if trailing_gap or internal_gap_days or leading_gap_days:
         days = sorted(set(missing_days(last_ts, now)) | set(internal_gap_days) | set(leading_gap_days))
         run_kind = f"latest + backfill({len(days)} day(s): {', '.join(days)})"
@@ -367,7 +363,7 @@ def main() -> None:
             )
         if leading_gap_days:
             log.info(
-                "retained history doesn't reach back as far as RETENTION_HOURS allows (likely just raised) -- "
+                "retained history doesn't reach back as far as HISTORY_START (likely just moved earlier) -- "
                 "backfilling leading day(s): %s",
                 ", ".join(leading_gap_days),
             )

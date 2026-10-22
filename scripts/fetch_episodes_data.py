@@ -1,10 +1,11 @@
 """Backfills Singapore PM2.5/PSI history from a fixed start date (default:
 August 1 of the current year) through now, into data/episodes_history.csv.
 
-This is deliberately independent of data/history.csv -- the live dashboard's
-rolling RETENTION_HOURS (60-day) window doesn't reach back far enough for a
-"since August" haze-episode search, and this script has no retention of its
-own: it keeps everything from the start date forward.
+This is deliberately independent of data/history.csv (the live dashboard's
+own history, kept since HISTORY_START in aq_lib.py) -- this script has its
+own start date and no retention of its own: it keeps everything from that
+start date forward, regardless of whatever window the live dashboard
+currently keeps.
 
 Reuses fetch_data.py's request/retry/parsing machinery (same API, same
 resilience to connection errors and persistent per-day failures -- a day
