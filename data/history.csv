@@ -42365,3 +42365,9 @@ timestamp,region,pm25_one_hourly,psi_twenty_four_hourly,pm25_twenty_four_hourly,
 2026-10-22T16:00:00+08:00,north,25,71,30,api
 2026-10-22T16:00:00+08:00,south,27,75,33,api
 2026-10-22T16:00:00+08:00,west,38,97,53,api
+2026-10-22T17:00:00+08:00,central,33,84,42,api
+2026-10-22T17:00:00+08:00,east,32,75,34,api
+2026-10-22T17:00:00+08:00,national,31.2,80.0,38.0,derived_national_mean
+2026-10-22T17:00:00+08:00,north,23,71,30,api
+2026-10-22T17:00:00+08:00,south,29,74,32,api
+2026-10-22T17:00:00+08:00,west,39,96,52,api
