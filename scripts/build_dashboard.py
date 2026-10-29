@@ -144,6 +144,15 @@ INDEX_HTML = r"""<!doctype html>
     --band: rgba(235,104,52,0.08);
     --whatif-line: #2a78d6;
     --whatif-band: rgba(42,120,214,0.12);
+    /* PSI health-category background bands (NEA's 5-tier scale). Same hue
+       per category in light/dark -- only the fill alpha changes, same
+       pattern as --band/--whatif-band above -- since these are reserved
+       status colors (good -> hazardous), not themed series colors. */
+    --psi-good: rgba(12,163,12,0.12);
+    --psi-moderate: rgba(250,178,25,0.14);
+    --psi-unhealthy: rgba(236,131,90,0.14);
+    --psi-very-unhealthy: rgba(208,59,59,0.12);
+    --psi-hazardous: rgba(122,31,31,0.14);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -158,6 +167,11 @@ INDEX_HTML = r"""<!doctype html>
       --band: rgba(235,104,52,0.14);
       --whatif-line: #5b9bea;
       --whatif-band: rgba(91,155,234,0.18);
+      --psi-good: rgba(12,163,12,0.20);
+      --psi-moderate: rgba(250,178,25,0.22);
+      --psi-unhealthy: rgba(236,131,90,0.22);
+      --psi-very-unhealthy: rgba(208,59,59,0.20);
+      --psi-hazardous: rgba(122,31,31,0.26);
     }
   }
   * { box-sizing: border-box; }
@@ -309,6 +323,10 @@ INDEX_HTML = r"""<!doctype html>
   svg.chart.dragging { cursor: grabbing; }
   .axis-label { font-size: 10px; fill: var(--faint); }
   .threshold-label { font-size: 10px; fill: var(--muted); }
+  .band-label {
+    font-size: 10px; fill: var(--muted); font-weight: 600;
+    paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round;
+  }
   .tooltip {
     position: fixed;
     pointer-events: none;
@@ -562,6 +580,18 @@ INDEX_HTML = r"""<!doctype html>
   var SG_TZ = "Asia/Singapore";
   var SG_OFFSET_MS = 8 * 3600 * 1000;
   var THRESHOLDS = [100, 150, 200, 250];
+  // Singapore NEA's 5-tier 24-hr PSI health classification (distinct from
+  // THRESHOLDS above, which are "time to reach PSI X" countdown targets, not
+  // health bands -- the boundaries happen to be a superset of
+  // aq_lib.PM25_PSI_BREAKPOINTS' PSI side). [from, to) per band; the last
+  // band's `to` is a sentinel, clamped to the actual y-domain when drawn.
+  var PSI_BANDS = [
+    { from: 0, to: 50, label: "Good", color: "var(--psi-good)" },
+    { from: 50, to: 100, label: "Moderate", color: "var(--psi-moderate)" },
+    { from: 100, to: 200, label: "Unhealthy", color: "var(--psi-unhealthy)" },
+    { from: 200, to: 300, label: "Very Unhealthy", color: "var(--psi-very-unhealthy)" },
+    { from: 300, to: Infinity, label: "Hazardous", color: "var(--psi-hazardous)" },
+  ];
   var MARGIN = { top: 10, right: 60, bottom: 6, left: 44 };
   var BOTTOM_AXIS_H = 24;
   var H_PM25 = 220, H_PSI = 250;
@@ -738,6 +768,32 @@ INDEX_HTML = r"""<!doctype html>
     });
   }
 
+  // Shaded PSI health-category background bands. Fills go into a panel's
+  // gridGroup (bottom layer, before grid lines are appended) so grid lines
+  // and data stay visible on top; labels go into chromeGroup (top layer,
+  // same as the THRESHOLDS reference-line labels) so data lines passing
+  // through a band never obscure its name. Clips each band to the current
+  // y-domain, same "skip if entirely out of view" discipline as THRESHOLDS,
+  // and skips the label (not the fill) if the band's visible sliver is too
+  // short for 10px text to sit in cleanly.
+  var MIN_BAND_LABEL_PX = 14;
+  function drawPsiBands(fillGroup, labelGroup, yDomain, y, innerW) {
+    PSI_BANDS.forEach(function (band) {
+      var lo = Math.max(band.from, yDomain[0]);
+      var hi = Math.min(band.to, yDomain[1]);
+      if (hi <= lo) return;
+      var yTop = y(hi), yBottom = y(lo);
+      fillGroup.appendChild(svgEl("rect", {
+        x: 0, y: yTop, width: innerW, height: yBottom - yTop, fill: band.color
+      }));
+      if (yBottom - yTop >= MIN_BAND_LABEL_PX) {
+        var lbl = svgEl("text", { class: "band-label", x: 6, y: (yTop + yBottom) / 2 + 3 });
+        lbl.textContent = band.label;
+        labelGroup.appendChild(lbl);
+      }
+    });
+  }
+
   function appendCell(tr, text, className) {
     var td = document.createElement("td");
     td.textContent = text;
@@ -868,6 +924,8 @@ INDEX_HTML = r"""<!doctype html>
     var yDomain = panel.isPsi ? state.psiYDomain : state.pm25YDomain;
     var y = scaleLinear(yDomain, [innerH, 0]);
     panel.x = x; panel.y = y; panel.innerW = innerW; panel.innerH = innerH;
+
+    if (panel.isPsi) drawPsiBands(panel.gridGroup, panel.chromeGroup, yDomain, y, innerW);
 
     var yTicks = niceTicks(yDomain[0], yDomain[1], 4);
     yTicks.forEach(function (t) {
