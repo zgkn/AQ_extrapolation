@@ -1,10 +1,4 @@
 timestamp,region,pm25_one_hourly,psi_twenty_four_hourly,pm25_twenty_four_hourly,pm25_24h_source
-2026-08-29T14:00:00+08:00,central,36,80,38,api
-2026-08-29T14:00:00+08:00,east,34,67,26,api
-2026-08-29T14:00:00+08:00,national,32.6,69.8,28.8,derived_national_mean
-2026-08-29T14:00:00+08:00,north,28,62,22,api
-2026-08-29T14:00:00+08:00,south,30,70,29,api
-2026-08-29T14:00:00+08:00,west,35,70,29,api
 2026-08-29T15:00:00+08:00,central,43,79,37,api
 2026-08-29T15:00:00+08:00,east,40,67,26,api
 2026-08-29T15:00:00+08:00,national,34.2,69.4,28.2,derived_national_mean
@@ -8765,3 +8759,9 @@ timestamp,region,pm25_one_hourly,psi_twenty_four_hourly,pm25_twenty_four_hourly,
 2026-10-29T14:00:00+08:00,north,30,73,32,api
 2026-10-29T14:00:00+08:00,south,25,70,29,api
 2026-10-29T14:00:00+08:00,west,35,78,36,api
+2026-10-29T15:00:00+08:00,central,11,70,29,api
+2026-10-29T15:00:00+08:00,east,8,70,29,api
+2026-10-29T15:00:00+08:00,national,14.0,72.0,30.6,derived_national_mean
+2026-10-29T15:00:00+08:00,north,11,73,31,api
+2026-10-29T15:00:00+08:00,south,13,70,29,api
+2026-10-29T15:00:00+08:00,west,27,77,35,api
